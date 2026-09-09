@@ -5,6 +5,7 @@ green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; bold=$'\033[1m'; reset=$
 [[ -t 1 ]] || green='' yellow='' red='' bold='' reset=''
 warnings=0
 failures=0
+readonly expected_image="ghcr.io/linuxmunchies/vimmite-v6-kinoite"
 
 ok() { printf '%s[OK]%s %s\n' "${green}" "${reset}" "$*"; }
 warn() { warnings=$((warnings + 1)); printf '%s[WARN]%s %s\n' "${yellow}" "${reset}" "$*"; }
@@ -25,6 +26,8 @@ check_unit() {
     if [[ "${expected}" == optional ]]; then
         if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
             systemctl is-active --quiet "${unit}" 2>/dev/null && ok "${label}: enabled and active" || fail "${label}: enabled but not active"
+        elif systemctl is-active --quiet "${unit}" 2>/dev/null; then
+            warn "${label}: active but not enabled; it will not start after reboot"
         else
             ok "${label}: disabled (optional; enable through vimmite-setup)"
         fi
@@ -40,6 +43,8 @@ check_user_unit() {
     if ! systemctl --user cat "${unit}" >/dev/null 2>&1; then warn "${label}: user unit not installed"; return; fi
     if systemctl --user is-enabled --quiet "${unit}" 2>/dev/null; then
         systemctl --user is-active --quiet "${unit}" 2>/dev/null && ok "${label}: enabled and active" || fail "${label}: enabled but not active"
+    elif systemctl --user is-active --quiet "${unit}" 2>/dev/null; then
+        warn "${label}: active but not enabled; it will not start after reboot"
     else
         ok "${label}: disabled (optional; enable through vimmite-setup)"
     fi
@@ -73,7 +78,12 @@ if has_command rpm-ostree; then
     if [[ -n "${status_json}" ]] && has_command jq; then
         booted_origin="$(jq -r '.deployments[] | select(.booted == true) | (."container-image-reference" // .origin // "unknown")' <<<"${status_json}" | head -n1)"
         booted_version="$(jq -r '.deployments[] | select(.booted == true) | (.version // .checksum[0:12] // "unknown")' <<<"${status_json}" | head -n1)"
-        [[ "${booted_origin}" == ostree-image-signed:* ]] && ok "Signed origin: ${booted_origin}" || fail "Booted origin is not signed: ${booted_origin}"
+        if [[ "${booted_origin}" == "ostree-image-signed:docker://${expected_image}:"* || \
+              "${booted_origin}" == "ostree-image-signed:docker://${expected_image}@"* ]]; then
+            ok "Signed Vimmite origin: ${booted_origin}"
+        else
+            fail "Booted origin is not the signed Vimmite image: ${booted_origin}"
+        fi
         ok "Booted deployment: ${booted_version}"
         pending="$(jq '[.deployments[] | select(.booted != true)] | length' <<<"${status_json}" 2>/dev/null || echo 0)"
         staged="$(jq '[.deployments[] | select(.staged == true)] | length' <<<"${status_json}" 2>/dev/null || echo 0)"

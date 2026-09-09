@@ -8,7 +8,7 @@ die() {
 }
 
 command -v gh >/dev/null || die "GitHub CLI (gh) is not installed"
-command -v bluebuild >/dev/null || die "BlueBuild is not installed"
+command -v skopeo >/dev/null || die "Skopeo is not installed"
 
 if ! gh auth status --hostname github.com >/dev/null 2>&1; then
   cat >&2 <<'EOF'
@@ -25,8 +25,8 @@ fi
 username="$(gh api user --jq .login)"
 [[ -n "$username" ]] || die "could not determine the authenticated GitHub username"
 
-printf 'Logging BlueBuild in to GHCR as %s...\n' "$username"
+printf 'Logging Skopeo in to GHCR as %s...\n' "$username"
 gh auth token --hostname github.com \
-  | bluebuild login ghcr.io --username "$username" --password-stdin
+  | skopeo login ghcr.io --username "$username" --password-stdin
 
 printf 'GHCR login complete. You can now run scripts/build-iso.sh published.\n'

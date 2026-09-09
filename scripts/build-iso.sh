@@ -5,39 +5,39 @@ set -Eeuo pipefail
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-MODE="published"
+MODE="local"
 OUTPUT_DIR="${PROJECT_DIR}/iso"
 WORK_DIR="${PROJECT_DIR}/.bluebuild-iso-work"
 IMAGE="ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest"
 RECIPE="${PROJECT_DIR}/recipes/vimmite.yml"
-ISO_NAME=""
+ARCHIVE_NAME="vimmite-v6-kinoite.tar.gz"
+ISO_NAME="vimmite-v6-kinoite.iso"
+REUSE_ARCHIVE=0
 VERBOSE=0
 
 usage() {
   cat <<'EOF'
-Build a Vimmite V6 installer ISO.
+Build a Vimmite V6 installer ISO without BlueBuild's broken generate-iso handoff.
 
 Usage:
-  scripts/build-iso.sh [published|local] [options]
+  scripts/build-iso.sh [local|published] [options]
 
 Modes:
-  published  Generate from the published GHCR image (default and fastest).
-  local      Build this checkout's recipe, then generate the ISO.
+  local       Build the recipe in this checkout (default).
+  published   Download the configured image from GHCR.
 
 Options:
-  --output-dir DIR  ISO destination (default: ./iso)
-  --work-dir DIR    Temporary build files (default: ./.bluebuild-iso-work)
-  --image REF       Published OCI image reference
-  --recipe FILE     Recipe used by local mode
-  --iso-name NAME   Output filename (a mode-specific name is the default)
-  -v, --verbose     Enable verbose BlueBuild output
-  -h, --help        Show this help
+  --reuse-archive   Reuse the validated archive in the work directory.
+  --output-dir DIR  ISO destination (default: ./iso).
+  --work-dir DIR    Persistent build workspace (default: ./.bluebuild-iso-work).
+  --image REF       Tagged published source and installed update origin.
+  --recipe FILE     Recipe used by local mode.
+  --iso-name NAME   Output filename.
+  -v, --verbose     Enable verbose BlueBuild output.
+  -h, --help        Show this help.
 
-Examples:
-  scripts/login-ghcr.sh
-  scripts/build-iso.sh
-  scripts/build-iso.sh local
-  scripts/build-iso.sh published --iso-name Vimmite-V6.iso
+ISO assembly runs inside a temporary Fedora KVM builder and does not need the
+host sudo password.
 EOF
 }
 
@@ -46,13 +46,17 @@ die() {
   exit 1
 }
 
-if [[ $# -gt 0 && ( "$1" == "published" || "$1" == "local" ) ]]; then
+if [[ $# -gt 0 && ( "$1" == "local" || "$1" == "published" ) ]]; then
   MODE="$1"
   shift
 fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --reuse-archive)
+      REUSE_ARCHIVE=1
+      shift
+      ;;
     --output-dir)
       [[ $# -ge 2 ]] || die "--output-dir needs a value"
       OUTPUT_DIR="$2"
@@ -92,88 +96,54 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v bluebuild >/dev/null || die "BlueBuild is not installed"
-command -v podman >/dev/null || die "Podman is not installed"
-command -v sudo >/dev/null || die "sudo is required for final ISO assembly"
+[[ "$ISO_NAME" != */* ]] || die "--iso-name must be a filename, not a path"
+[[ "$ISO_NAME" == *.iso ]] || ISO_NAME="${ISO_NAME}.iso"
 [[ "$MODE" != "local" || -f "$RECIPE" ]] || die "recipe not found: $RECIPE"
 
-if [[ -z "$ISO_NAME" ]]; then
-  if [[ "$MODE" == "local" ]]; then
-    ISO_NAME="Vimmite-V6-local.iso"
-  else
-    ISO_NAME="Vimmite-V6.iso"
-  fi
+command -v skopeo >/dev/null || die "Skopeo is not installed"
+if [[ "$MODE" == "local" && "$REUSE_ARCHIVE" -eq 0 ]]; then
+  command -v bluebuild >/dev/null || die "BlueBuild is not installed"
+  command -v podman >/dev/null || die "Podman is not installed"
 fi
-[[ "$ISO_NAME" == *.iso ]] || ISO_NAME="${ISO_NAME}.iso"
 
 mkdir -p -- "$OUTPUT_DIR" "$WORK_DIR"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
 WORK_DIR="$(cd -- "$WORK_DIR" && pwd)"
+readonly ARCHIVE_PATH="${WORK_DIR}/${ARCHIVE_NAME}"
 
-if [[ -e "${OUTPUT_DIR}/${ISO_NAME}" ]]; then
-  die "output already exists: ${OUTPUT_DIR}/${ISO_NAME}"
-fi
-
-available_kib=$(df -Pk "$WORK_DIR" | awk 'NR == 2 {print $4}')
-if [[ "$available_kib" -lt $((80 * 1024 * 1024)) ]]; then
-  die "less than 80 GiB is available in the build workspace: $WORK_DIR"
-fi
-
-BLUEBUILD_ARGS=()
-(( VERBOSE == 0 )) || BLUEBUILD_ARGS+=(--verbose)
-BLUEBUILD_ARGS+=(
-  generate-iso
-  --output-dir "$OUTPUT_DIR"
-  --tempdir "$WORK_DIR"
-  --iso-name "$ISO_NAME"
-)
-
-if [[ "$MODE" == "local" ]]; then
-  BLUEBUILD_ARGS+=(recipe "$RECIPE")
+if [[ "$REUSE_ARCHIVE" -eq 1 ]]; then
+  [[ -f "$ARCHIVE_PATH" ]] || die "archive not found: $ARCHIVE_PATH"
+  printf 'Reusing persistent image archive: %s\n' "$ARCHIVE_PATH"
 else
-  BLUEBUILD_ARGS+=(image "$IMAGE")
-fi
+  archive_stage="$(mktemp -d "${WORK_DIR}/archive.XXXXXX")"
+  staged_archive="${archive_stage}/${ARCHIVE_NAME}"
 
-printf 'Vimmite V6 ISO build\n'
-printf '  mode:   %s\n' "$MODE"
-printf '  source: %s\n' "$([[ "$MODE" == "local" ]] && printf '%s' "$RECIPE" || printf '%s' "$IMAGE")"
-printf '  output: %s\n' "${OUTPUT_DIR}/${ISO_NAME}"
-printf '  work:   %s\n\n' "$WORK_DIR"
-
-# BlueBuild invokes sudo from a child process during installer assembly. That
-# child cannot safely prompt for a password, so acquire a ticket here, where
-# the user can see the prompt, and refresh it while a long local compose runs.
-printf 'Authorizing final ISO assembly before the build starts...\n'
-sudo -v || die "administrator authentication failed"
-
-keep_sudo_ticket_alive() {
-  while sleep 60; do
-    sudo -n -v || return
-  done
-}
-
-keep_sudo_ticket_alive &
-SUDO_KEEPALIVE_PID=$!
-cleanup_sudo_keepalive() {
-  kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-  wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
-}
-trap cleanup_sudo_keepalive EXIT
-
-if ! bluebuild "${BLUEBUILD_ARGS[@]}"; then
-  if [[ "$MODE" == "published" ]]; then
-    cat >&2 <<'EOF'
-
-The published GHCR image may require authentication. Authenticate with:
-
-  scripts/login-ghcr.sh
-
-Or build entirely from this checkout without accessing the private image:
-
-  scripts/build-iso.sh local
-EOF
+  if [[ "$MODE" == "local" ]]; then
+    mkdir -p -- "${WORK_DIR}/bluebuild-temp"
+    bluebuild_args=(build --archive "$archive_stage" --tempdir "${WORK_DIR}/bluebuild-temp")
+    (( VERBOSE == 0 )) || bluebuild_args+=(--verbose)
+    printf 'Building the Vimmite image into a persistent OCI archive...\n'
+    (
+      cd -- "$PROJECT_DIR"
+      bluebuild "${bluebuild_args[@]}" "$RECIPE"
+    )
+  else
+    printf 'Downloading %s into a persistent OCI archive...\n' "$IMAGE"
+    skopeo copy --retry-times 3 "docker://${IMAGE}" "oci-archive:${staged_archive}"
   fi
-  exit 1
+
+  [[ -s "$staged_archive" ]] || die "image build did not produce $staged_archive"
+  skopeo inspect "oci-archive:${staged_archive}" >/dev/null
+  mv -f -- "$staged_archive" "$ARCHIVE_PATH"
+  rmdir -- "$archive_stage" 2>/dev/null || true
 fi
 
-printf '\nISO generation complete: %s\n' "${OUTPUT_DIR}/${ISO_NAME}"
+printf 'Validating image archive...\n'
+skopeo inspect "oci-archive:${ARCHIVE_PATH}" >/dev/null
+
+exec "${SCRIPT_DIR}/build-iso-vm.sh" \
+  --archive "$ARCHIVE_PATH" \
+  --target-image "$IMAGE" \
+  --work-dir "$WORK_DIR" \
+  --output-dir "$OUTPUT_DIR" \
+  --iso-name "$ISO_NAME"

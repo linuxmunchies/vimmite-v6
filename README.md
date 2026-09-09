@@ -129,64 +129,55 @@ BlueBuild publishes an OCI image, not a downloadable ISO. A successful `main`
 build creates the package above; generate the installer locally from that
 package with the following command.
 
-The repository includes a wrapper that performs the disk-space and tool checks,
-keeps temporary files off `/tmp`, and selects the published image by default:
+The repository includes a wrapper that builds the current checkout by default,
+stores the image as a persistent OCI archive, and assembles the ISO in a small
+temporary KVM virtual machine:
 
 ```bash
-scripts/login-ghcr.sh # needed while the GHCR package is private
 scripts/build-iso.sh
 ```
 
-To compose the current checkout before generating the installer instead, run
-`scripts/build-iso.sh local`. Run `scripts/build-iso.sh --help` for output,
-workspace, image, and recipe overrides.
+The finished ISO and checksum are written to `iso/`. The VM provides the real
+mount privileges Lorax needs without asking for the host administrator
+password. It requires KVM/QEMU, `mkisofs`, SSH, curl, Skopeo, BlueBuild, Podman,
+and at least 70 GiB of free workspace. Run `scripts/build-iso.sh --help` for
+output, workspace, image, and recipe overrides.
+
+The installer embeds the image archive for offline installation and records
+the configured signed GHCR reference as the installed system's update origin
+(the default is `ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`; override it
+with `--image`). After installation, `rpm-ostree status` must show
+`ghcr.io/linuxmunchies/vimmite-v6-kinoite`, not Fedora's base image.
+
+If ISO assembly needs to be retried without rebuilding the image, reuse the
+validated archive:
+
+```bash
+scripts/build-iso.sh --reuse-archive --iso-name vimmite-v6-kinoite-retry.iso
+```
+
+To use the published image instead of composing the checkout, authenticate
+while the GHCR package is private and select published mode:
+
+```bash
+scripts/login-ghcr.sh
+scripts/build-iso.sh published
+```
 
 The login helper uses the active GitHub CLI account and passes its token to
-BlueBuild over standard input; it does not print or store the token in this
+Skopeo over standard input; it does not print or store the token in this
 repository. If GitHub CLI reports an expired login, run `gh auth login
 --hostname github.com`, then `gh auth refresh --hostname github.com --scopes
 read:packages`, before retrying the helper.
 
-Run the wrapper as your normal user. It requests administrator authentication
-up front and keeps that authorization alive while BlueBuild builds and caches
-the image rootlessly. This prevents BlueBuild's non-interactive installer child
-from timing out when it reaches the privileged ISO-assembly stage.
-
-### Recommended: generate from the published image
-
-Clone the repository so the signing key and documentation are available:
-
-```bash
-gh repo clone linuxmunchies/vimmite-v6
-cd vimmite-v6
-mkdir -p iso
-```
-
-Generate a Kinoite installer from the latest published primary image:
-
-```bash
-sudo bluebuild generate-iso \
-  --output-dir ./iso \
-  --iso-name Vimmite-V6.iso \
-  image ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest
-```
-
-Generating from the published image avoids rebuilding the OS locally and is
-the normal path for an installation USB.
-
-### Fully local: build the recipe and ISO together
-
-To build the image from this checkout before creating the installer:
-
-```bash
-sudo bluebuild generate-iso \
-  --output-dir ./iso \
-  --iso-name Vimmite-V6-local.iso \
-  recipe recipes/vimmite.yml
-```
-
-This path takes longer and needs substantially more temporary storage because
-it composes the entire image locally first and rebuilds the initramfs.
+Do not use `bluebuild generate-iso recipe` with BlueBuild 0.9.37 here. That
+version can create the local archive and then mount an empty `/img_src` into
+the installer, causing the late `archive file not found` failure tracked in
+[blue-build/cli issue #661](https://github.com/blue-build/cli/issues/661). The
+wrapper deliberately separates image composition from ISO assembly, validates
+the archive on both sides of the VM boundary, and preserves it for fast retries.
+It also verifies the SHA-256 checksum and Fedora embedded media checksum before
+reporting success.
 
 ### Write and boot the installer
 

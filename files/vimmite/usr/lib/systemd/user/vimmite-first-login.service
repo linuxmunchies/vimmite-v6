@@ -1,0 +1,11 @@
+[Unit]
+Description=Apply Vimmite defaults to a new Plasma profile
+After=plasma-plasmashell.service
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/vimmite-first-login
+
+[Install]
+WantedBy=graphical-session.target

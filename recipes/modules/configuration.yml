@@ -20,3 +20,6 @@ modules:
     system:
       enabled:
         - vimmite-brew-packages.service
+    user:
+      enabled:
+        - vimmite-first-login.service

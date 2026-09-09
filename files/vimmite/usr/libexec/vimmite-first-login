@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+readonly state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/vimmite"
+readonly sentinel="${state_dir}/plasma-defaults-applied"
+readonly plasma_config="${XDG_CONFIG_HOME:-${HOME}/.config}/plasma-org.kde.plasma.desktop-appletsrc"
+readonly wallpaper="/usr/share/wallpapers/Vimmite"
+
+[[ ! -e "${sentinel}" ]] || exit 0
+mkdir -p -- "${state_dir}"
+
+current_image="$(sed -n 's/^Image=//p' "${plasma_config}" 2>/dev/null | head -n1 || true)"
+case "${current_image}" in
+    ""|Fedora|Next|file:///usr/share/wallpapers/Fedora*|file:///usr/share/wallpapers/Next*)
+        for _ in $(seq 1 30); do
+            if plasma-apply-wallpaperimage "${wallpaper}" >/dev/null 2>&1; then
+                touch -- "${sentinel}"
+                exit 0
+            fi
+            sleep 1
+        done
+        echo "Vimmite wallpaper could not be applied because Plasma was not ready." >&2
+        exit 1
+        ;;
+    *)
+        # Preserve a wallpaper that the user or another provisioning tool selected.
+        touch -- "${sentinel}"
+        ;;
+esac
