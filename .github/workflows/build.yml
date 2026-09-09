@@ -1,13 +1,15 @@
 name: Vimmite V6 image
+
 on:
+  schedule:
+    # Rebuild daily after the upstream Universal Blue images are published.
+    - cron: "00 06 * * *"
+  push:
+    paths-ignore:
+      - "**.md"
   pull_request:
   workflow_dispatch:
-    inputs:
-      release_approved:
-        description: "Confirm the V6 physical acceptance matrix and build gate passed"
-        required: true
-        default: false
-        type: boolean
+
 concurrency:
   # only run one build at a time
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
@@ -15,20 +17,23 @@ concurrency:
 jobs:
   bluebuild:
     name: Build Vimmite V6 image
-    if: github.event_name == 'pull_request' || inputs.release_approved
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe:
+          - vimmite.yml
     steps:
       # the build is fully handled by the reusable github action
       - name: Build Custom Image
         uses: blue-build/github-action@v1.12
         with:
-          recipe: vimmite.yml
+          recipe: ${{ matrix.recipe }}
           cosign_private_key: ${{ secrets.SIGNING_SECRET }}
-          push: ${{ github.event_name == 'workflow_dispatch' }}
           registry_token: ${{ github.token }}
           pr_event_number: ${{ github.event.number }}
 

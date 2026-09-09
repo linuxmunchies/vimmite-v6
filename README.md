@@ -129,6 +129,29 @@ BlueBuild publishes an OCI image, not a downloadable ISO. A successful `main`
 build creates the package above; generate the installer locally from that
 package with the following command.
 
+The repository includes a wrapper that performs the disk-space and tool checks,
+keeps temporary files off `/tmp`, and selects the published image by default:
+
+```bash
+scripts/login-ghcr.sh # needed while the GHCR package is private
+scripts/build-iso.sh
+```
+
+To compose the current checkout before generating the installer instead, run
+`scripts/build-iso.sh local`. Run `scripts/build-iso.sh --help` for output,
+workspace, image, and recipe overrides.
+
+The login helper uses the active GitHub CLI account and passes its token to
+BlueBuild over standard input; it does not print or store the token in this
+repository. If GitHub CLI reports an expired login, run `gh auth login
+--hostname github.com`, then `gh auth refresh --hostname github.com --scopes
+read:packages`, before retrying the helper.
+
+Run the wrapper as your normal user. It requests administrator authentication
+up front and keeps that authorization alive while BlueBuild builds and caches
+the image rootlessly. This prevents BlueBuild's non-interactive installer child
+from timing out when it reaches the privileged ISO-assembly stage.
+
 ### Recommended: generate from the published image
 
 Clone the repository so the signing key and documentation are available:
