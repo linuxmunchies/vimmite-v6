@@ -194,6 +194,24 @@ passphrase available for every cold boot.
 This is only for an existing Atomic Fedora desktop such as Kinoite or
 Silverblue. Do not run these commands on traditional mutable Fedora.
 
+While the GHCR package is private, the installed system also needs a
+revocable personal access token (classic) scoped only to `read:packages`.
+Store it in OSTree's root-only credential file before rebasing or updating:
+
+```bash
+read -rsp 'GHCR read token: ' GHCR_TOKEN; echo
+printf '%s' "$GHCR_TOKEN" | sudo skopeo login \
+  --authfile /etc/ostree/auth.json \
+  --username linuxmunchies --password-stdin ghcr.io
+unset GHCR_TOKEN
+sudo chmod 600 /etc/ostree/auth.json
+```
+
+Use a dedicated token rather than a broad GitHub CLI credential. Remove the
+file with `sudo rm /etc/ostree/auth.json` to revoke local access after revoking
+the token on GitHub. This setup is unnecessary if the package is made public;
+the repository itself can remain private.
+
 The first rebase uses the unverified transport once so the image can install
 Vimmite V6's signing policy and public key:
 
