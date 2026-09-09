@@ -1,6 +1,6 @@
-# Vimmite V5 investigation
+# Vimmite V6 investigation
 
-This is the working record for the Vimmite V5 audit and rebuild. It records
+This is the working record for the Vimmite V6 audit and rebuild. It records
 observations separately from decisions and keeps unresolved design work visible.
 
 ## Confirmed scope and decisions
@@ -39,7 +39,7 @@ observations separately from decisions and keeps unresolved design work visible.
 ## Current repository observations
 
 - `recipes/vimmite.yml` now inherits `ghcr.io/ublue-os/kinoite-main:44`; it is
-  the sole supported Vimmite V5 image recipe.
+  the sole supported Vimmite V6 image recipe.
 - The replacement is split into explicit hardware, host package, gaming,
   virtualization, configuration, Flatpak, and signing modules.
 - The locally installed BlueBuild CLI validates the recipe, and a complete
@@ -50,10 +50,12 @@ observations separately from decisions and keeps unresolved design work visible.
 - Gamescope and NVIDIA-specific RPMs are absent. The inherited
   `fedora-multimedia` repository supplies Steam, avoiding an additional Steam
   repository in this project.
-- The corrected PipeWire-Pulse rule matches Vesktop's observed process
-  properties. The HyperX microphone path unit restores 90% when explicitly
-  enabled through `ujust hyperx-mic enable`; it is inactive by default.
-- The workflow builds and publishes the Kinoite-based Vimmite V5 recipe.
+- The PipeWire-Pulse rule retains Vesktop's previously observed process
+  properties and adds Equibop's packaged executable identity. A real Equibop
+  call must confirm its live properties and volume behavior. The HyperX
+  microphone path unit restores 90% when explicitly enabled through `ujust
+  hyperx-mic enable`; it is inactive by default.
+- The workflow builds and publishes the Kinoite-based Vimmite V6 recipe.
 
 ## Current host observations
 
@@ -152,7 +154,7 @@ The existing Vimmite2 deployment runs `user-flatpak-setup.timer` 30 seconds
 after the user session starts. Its generated configuration declares a user
 Flathub remote with an empty install list and notifications enabled, producing
 the repeated "finished automated installation of 0 user Flatpaks" message.
-Vimmite V5 retains the user Flathub remote for optional applications but explicitly
+Vimmite V6 retains the user Flathub remote for optional applications but explicitly
 sets `notify: false` for that empty user scope. System Flatpak reconciliation and
 its useful notifications remain enabled.
 

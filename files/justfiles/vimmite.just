@@ -1,6 +1,27 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set positional-arguments
 
+[doc('Open the guided Vimmite first-run setup menu')]
+[group('Vimmite')]
+vimmite-setup:
+    /usr/libexec/vimmite-setup
+
+[doc('Check image, graphics, gaming, containers, storage, and service health')]
+[group('Vimmite')]
+vimmite-doctor:
+    /usr/libexec/vimmite-doctor
+
+[doc('Create a private, redacted diagnostic archive in the current directory')]
+[group('Vimmite')]
+vimmite-support-bundle output="":
+    #!/usr/bin/env bash
+    /usr/libexec/vimmite-support-bundle "$@"
+
+[doc('Build and manage the declarative vimmite-dev development Distrobox')]
+[group('Development')]
+vimmite-dev *args:
+    /usr/libexec/vimmite-devbox "$@"
+
 [doc('Manage stable Vulkan and ROCm llama.cpp Distroboxes for Strix Halo/gfx1151')]
 [group('Strix Halo AI')]
 strix-halo-ai *args:

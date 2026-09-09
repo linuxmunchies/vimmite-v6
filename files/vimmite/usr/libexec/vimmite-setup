@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly DEV_BOX="vimmite-dev"
+readonly MODEL_STORE="${RAMALAMA_STORE:-${HOME}/ai/models}"
+
+green=$'\033[32m'
+yellow=$'\033[33m'
+bold=$'\033[1m'
+reset=$'\033[0m'
+[[ -t 1 ]] || green='' yellow='' bold='' reset=''
+
+enabled() { printf '%s%s%s' "${green}" "enabled" "${reset}"; }
+disabled() { printf '%s%s%s' "${yellow}" "disabled" "${reset}"; }
+
+pause() {
+    [[ -t 0 ]] || return 0
+    read -r -p "Press Enter to continue..." _
+}
+
+choose() {
+    local prompt="$1"
+    shift
+    local selection
+    if command -v ugum >/dev/null 2>&1; then
+        printf '\n%s\n' "${prompt}" >&2
+        # ugum forwards the remaining arguments as choices on uBlue images.
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return; }
+            echo "Choose a number from the list." >&2
+        done
+    fi
+}
+
+run_ujust() {
+    local runner="${VIMMITE_UJUST:-ujust}"
+    "${runner}" "$@"
+}
+
+unit_state() {
+    local scope="$1" unit="$2"
+    if [[ "${scope}" == user ]]; then
+        systemctl --user is-enabled --quiet "${unit}" 2>/dev/null && enabled || disabled
+    else
+        systemctl is-enabled --quiet "${unit}" 2>/dev/null && enabled || disabled
+    fi
+}
+
+flatpak_state() {
+    local app="$1"
+    flatpak list --app --columns=application 2>/dev/null | grep -Fxq "${app}" && enabled || disabled
+}
+
+show_header() {
+    clear 2>/dev/null || true
+    printf '%sVimmite first-run setup%s\n' "${bold}" "${reset}"
+    echo "Choose only what this machine needs. Each screen shows current state and the undo command."
+    echo
+}
+
+desktop_menu() {
+    local current choice
+    current="$(kreadconfig6 --file kdeglobals --group KDE --key LookAndFeelPackage 2>/dev/null || true)"
+    echo "Desktop appearance: $([[ "${current}" == org.vimmite.desktop ]] && enabled || disabled)"
+    echo "Undo: select 'Restore KDE Breeze' below. This changes only the current user's Plasma appearance."
+    choice="$(choose "Desktop appearance" \
+        "Apply Vimmite appearance" \
+        "Restore KDE Breeze" \
+        "Back")" || return 0
+    case "${choice}" in
+        "Apply Vimmite appearance")
+            plasma-apply-lookandfeel --apply org.vimmite.desktop
+            kwriteconfig6 --file kdeglobals --group General --key ColorScheme VimmiteGraphite
+            echo "Vimmite appearance is $(enabled). Undo here with 'Restore KDE Breeze'."
+            ;;
+        "Restore KDE Breeze")
+            plasma-apply-lookandfeel --apply org.kde.breeze.desktop
+            echo "Vimmite appearance is $(disabled). Re-enable it from this menu."
+            ;;
+    esac
+    pause
+}
+
+development_menu() {
+    local state choice
+    if podman container exists "${DEV_BOX}" >/dev/null 2>&1; then state="$(enabled)"; else state="$(disabled)"; fi
+    echo "Declarative development container (${DEV_BOX}): ${state}"
+    echo "Undo: remove the container here or run: ujust vimmite-dev remove"
+    echo "Projects and configuration in your shared home are retained when the container is replaced or removed."
+    choice="$(choose "Development container" \
+        "Create Fedora development container" \
+        "Update/rebuild development container" \
+        "Enter development container" \
+        "Check development container" \
+        "Install optional mise version manager" \
+        "Remove development container" \
+        "Back")" || return 0
+    case "${choice}" in
+        "Create Fedora development container")
+            run_ujust vimmite-dev create
+            echo "Development container is $(enabled). Undo: ujust vimmite-dev remove"
+            ;;
+        "Update/rebuild development container") run_ujust vimmite-dev update ;;
+        "Enter development container") run_ujust vimmite-dev enter ;;
+        "Check development container") run_ujust vimmite-dev doctor ;;
+        "Install optional mise version manager") run_ujust vimmite-dev mise ;;
+        "Remove development container") run_ujust vimmite-dev remove ;;
+    esac
+    pause
+}
+
+gaming_menu() {
+    local steam_state mango64_state mango32_state gamemode_state choice
+    rpm -q steam >/dev/null 2>&1 && steam_state="$(enabled)" || steam_state="$(disabled)"
+    rpm -q mangohud.x86_64 >/dev/null 2>&1 && mango64_state="$(enabled)" || mango64_state="$(disabled)"
+    rpm -q mangohud.i686 >/dev/null 2>&1 && mango32_state="$(enabled)" || mango32_state="$(disabled)"
+    command -v gamemoderun >/dev/null 2>&1 && gamemode_state="$(enabled)" || gamemode_state="$(disabled)"
+    printf 'Native Steam: %s\nMangoHud 64-bit: %s\nMangoHud 32-bit: %s\nGameMode: %s\n' \
+        "${steam_state}" "${mango64_state}" "${mango32_state}" "${gamemode_state}"
+    echo "These are image features. Undo: rebase to an image without the gaming module; they are not layered onto this deployment."
+    choice="$(choose "Gaming options" \
+        "Install Moonlight streaming client ($(flatpak_state com.moonlight_stream.Moonlight))" \
+        "Install Sunshine streaming host ($(flatpak_state dev.lizardbyte.app.Sunshine))" \
+        "Back")" || return 0
+    case "${choice}" in
+        "Install Moonlight"*)
+            run_ujust install-streaming moonlight
+            echo "Moonlight is $(enabled). Undo: flatpak --user uninstall com.moonlight_stream.Moonlight"
+            ;;
+        "Install Sunshine"*)
+            run_ujust install-streaming sunshine
+            echo "Sunshine is $(enabled). Undo: flatpak --user uninstall dev.lizardbyte.app.Sunshine"
+            ;;
+    esac
+    pause
+}
+
+ai_menu() {
+    local rama_state vulkan_state rocm_state choice
+    [[ -x "${HOME}/.local/share/ramalama-cli/bin/ramalama" ]] && rama_state="$(enabled)" || rama_state="$(disabled)"
+    podman container exists strix-halo-vulkan >/dev/null 2>&1 && vulkan_state="$(enabled)" || vulkan_state="$(disabled)"
+    podman container exists strix-halo-rocm >/dev/null 2>&1 && rocm_state="$(enabled)" || rocm_state="$(disabled)"
+    printf 'RamaLama Vulkan backend: %s\nStrix Halo Vulkan container: %s\nStrix Halo ROCm container: %s\n' \
+        "${rama_state}" "${vulkan_state}" "${rocm_state}"
+    echo "Model storage: ${MODEL_STORE}"
+    echo "Undo: use the Strix Halo manager's Remove action. RamaLama can be removed by deleting ~/.local/share/ramalama-cli; models remain in the store."
+    choice="$(choose "AI backend and model storage" \
+        "Install RamaLama Vulkan backend (no model download)" \
+        "Open Strix Halo Vulkan/ROCm manager" \
+        "Create model storage directory" \
+        "Back")" || return 0
+    case "${choice}" in
+        "Install RamaLama"*) run_ujust ramalama-setup ;;
+        "Open Strix Halo"*) run_ujust strix-halo-ai ;;
+        "Create model storage directory")
+            mkdir -p "${MODEL_STORE}"
+            echo "Model storage is ready at ${MODEL_STORE}. Undo: remove it only after confirming it contains no wanted models."
+            ;;
+    esac
+    pause
+}
+
+virtualization_menu() {
+    local state choice
+    systemctl is-enabled --quiet virtqemud.socket 2>/dev/null && state="$(enabled)" || state="$(disabled)"
+    echo "Virtualization sockets: ${state}"
+    echo "Undo: sudo systemctl disable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket virtsecretd.socket virtnodedevd.socket virtnwfilterd.socket"
+    choice="$(choose "Virtualization" "Enable virtualization" "Back")" || return 0
+    [[ "${choice}" == "Enable virtualization" ]] && run_ujust setup-virtualization
+    pause
+}
+
+network_menu() {
+    local choice interface
+    echo "SSH server: $(unit_state system sshd.service)"
+    echo "Undo SSH: ujust ssh-server disable"
+    nmcli --fields DEVICE,TYPE,STATE device status 2>/dev/null || true
+    echo "Wake-on-LAN is configured per wired connection. Undo: ujust wake-on-lan <interface> disable"
+    choice="$(choose "SSH and Wake-on-LAN" \
+        "Enable SSH server" "Disable SSH server" "Enable Wake-on-LAN" "Disable Wake-on-LAN" "Back")" || return 0
+    case "${choice}" in
+        "Enable SSH server") run_ujust ssh-server enable ;;
+        "Disable SSH server") run_ujust ssh-server disable ;;
+        "Enable Wake-on-LAN"|"Disable Wake-on-LAN")
+            read -r -p "Wired interface name: " interface
+            [[ -n "${interface}" ]] && run_ujust wake-on-lan "${interface}" "$([[ "${choice}" == Enable* ]] && echo enable || echo disable)"
+            ;;
+    esac
+    pause
+}
+
+optional_menu() {
+    local choice
+    echo "Drive automount: $(unit_state system ublue-os-media-automount.service) — undo: ujust automount disable"
+    echo "HyperX microphone helper: $(unit_state user vimmite-hyperx-mic-volume.path) — undo: ujust hyperx-mic disable"
+    echo "Moonlight: $(flatpak_state com.moonlight_stream.Moonlight) — undo: flatpak --user uninstall com.moonlight_stream.Moonlight"
+    echo "Sunshine: $(flatpak_state dev.lizardbyte.app.Sunshine) — undo: flatpak --user uninstall dev.lizardbyte.app.Sunshine"
+    choice="$(choose "Automount and HyperX" \
+        "Enable drive automount" "Disable drive automount" \
+        "Enable HyperX microphone helper" "Disable HyperX microphone helper" "Back")" || return 0
+    case "${choice}" in
+        "Enable drive automount") run_ujust automount enable ;;
+        "Disable drive automount") run_ujust automount disable ;;
+        "Enable HyperX microphone helper") run_ujust hyperx-mic enable ;;
+        "Disable HyperX microphone helper") run_ujust hyperx-mic disable ;;
+    esac
+    pause
+}
+
+if [[ "${1:-}" == "--status" ]]; then
+    echo "Vimmite setup is interactive. Run without --status to open the menu."
+    exit 0
+fi
+
+if [[ ! -t 0 ]]; then
+    echo "vimmite-setup needs an interactive terminal." >&2
+    exit 2
+fi
+
+while true; do
+    show_header
+    main_choice="$(choose "What would you like to configure?" \
+        "Desktop appearance" \
+        "Development container" \
+        "Gaming and streaming" \
+        "AI backend and model storage" \
+        "Virtualization" \
+        "SSH and Wake-on-LAN" \
+        "Automount and HyperX" \
+        "Run Vimmite Doctor" \
+        "Finish")" || exit 0
+    show_header
+    case "${main_choice}" in
+        "Desktop appearance") desktop_menu ;;
+        "Development container") development_menu ;;
+        "Gaming and streaming") gaming_menu ;;
+        "AI backend and model storage") ai_menu ;;
+        "Virtualization") virtualization_menu ;;
+        "SSH and Wake-on-LAN") network_menu ;;
+        "Automount and HyperX") optional_menu ;;
+        "Run Vimmite Doctor")
+            if ! /usr/libexec/vimmite-doctor; then
+                echo "Doctor found failures; setup will remain open so you can review or change options."
+            fi
+            pause
+            ;;
+        "Finish") echo "Setup closed. Run 'ujust vimmite-doctor' any time to check the system."; exit 0 ;;
+    esac
+done

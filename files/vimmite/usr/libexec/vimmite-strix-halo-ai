@@ -572,7 +572,7 @@ models. Rootless Podman receives host supplementary groups with
 Developer-only hardware override:
   STRIX_HALO_AI_ALLOW_UNSUPPORTED=1 ujust strix-halo-ai
 
-Documentation: https://github.com/linuxmunchies/vimmite-v5/blob/main/docs/strix-halo-ai.md
+Documentation: https://github.com/linuxmunchies/vimmite-v6/blob/main/docs/strix-halo-ai.md
 EOF
 }
 

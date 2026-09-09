@@ -1,6 +1,6 @@
-# Vimmite V5 architecture proposal
+# Vimmite V6 architecture proposal
 
-Status: implemented as the sole Vimmite V5 recipe. The previous Bazzite recipe
+Status: implemented as the sole Vimmite V6 recipe. The previous Bazzite recipe
 has been retired after successful installation and update testing on hardware.
 
 ## Recommended foundation
@@ -9,7 +9,7 @@ Use `ghcr.io/ublue-os/kinoite-main:44` as the first non-Bazzite development
 base.
 
 This is a deliberate intermediate foundation, not a claim that Universal Blue
-must remain underneath Vimmite V5 forever. It removes Bazzite's gaming policy and
+must remain underneath Vimmite V6 forever. It removes Bazzite's gaming policy and
 custom OGC kernel while retaining a maintained KDE Atomic desktop, Fedora's
 standard kernel, codecs, Flathub setup, Distrobox, `ujust`, device rules, image
 update services, and the Universal Blue kernel-signing chain.
@@ -28,7 +28,7 @@ pull requests. Routine rebuilds can still pick up refreshed Fedora 44 content.
   work: complete multimedia codecs, AMD and Intel graphics userspace,
   thumbnails, Flathub, Distrobox, update services, and common device rules.
 - The selected `kinoite-main` output has no proprietary Nvidia driver stack.
-  Vimmite V5 will not select an Nvidia image variant, install Nvidia packages, add
+  Vimmite V6 will not select an Nvidia image variant, install Nvidia packages, add
   an Nvidia repository, or ship Nvidia-specific configuration.
 
 The generic Fedora kernel still contains upstream drivers for many hardware
@@ -43,7 +43,7 @@ required on the AMD/Intel targets and currently costs about 106 MB.
 | --- | --- | --- |
 | `ghcr.io/ublue-os/kinoite-main:44` | Recommend | Actively consumed by Aurora/Bazzite, uses a standard Fedora kernel with the Universal Blue signing and akmod pipeline, and retains the desktop integration we actually need. |
 | `ghcr.io/blue-build/base-images/fedora-kinoite:44` | Defer | Attractive in principle, but its maintainers are still publicly defining support scope and it introduces BlueBuild's separate kernel-signing key. It is built from the same experimental Fedora desktop OCI source, so it does not currently buy a more official foundation. |
-| `quay.io/fedora-ostree-desktops/kinoite:44` | Do not use directly | This is an unofficial experimental desktop OCI source. Using it directly makes Vimmite V5 own codecs, image update behavior, kernel-module signing, and other integration without removing the underlying stability concern. |
+| `quay.io/fedora-ostree-desktops/kinoite:44` | Do not use directly | This is an unofficial experimental desktop OCI source. Using it directly makes Vimmite V6 own codecs, image update behavior, kernel-module signing, and other integration without removing the underlying stability concern. |
 | `quay.io/fedora/fedora-bootc:44` | Long-term candidate, not now | This is an official stable bootc base, but it contains no desktop. Building and maintaining KDE Atomic semantics from it would substantially increase R&D before any user-facing requirement is restored. |
 
 Sources:
@@ -86,7 +86,7 @@ Recommended host packages:
 Fedora 44 publishes MangoHud, Gamescope, and `steam-devices` directly.
 Steam itself is nonfree. The selected `kinoite-main` base already enables its
 Fedora Multimedia repository, which supplies the native Steam package and its
-multilib dependencies. Vimmite V5 uses that inherited repository and adds no
+multilib dependencies. Vimmite V6 uses that inherited repository and adds no
 gaming or Nvidia repository of its own.
 
 Native Steam is the initial recommendation because it most closely matches the
@@ -171,7 +171,7 @@ idempotent `ujust setup-zsh` repair/upgrade path must not overwrite an existing
 `.zshrc` without explicit confirmation.
 
 Universal Blue removes `chsh` deliberately because rolling back to an image
-without the selected shell can make login fail. Vimmite V5 should not silently
+without the selected shell can make login fail. Vimmite V6 should not silently
 restore `chsh`. The post-install command can either configure Konsole to launch
 Zsh (safest) or, after warning about the rollback constraint, use `usermod` to
 make the image-baked `/usr/bin/zsh` the login shell. The latter is appropriate
@@ -182,8 +182,9 @@ only while every retained deployment includes Zsh.
 - Install Fira Code and JetBrains Mono Nerd Fonts from pinned artifacts with
   checksums. BlueBuild's convenience font module always fetches the latest
   release, so it is not the reproducible choice here.
-- Keep the corrected Vesktop microphone-volume block in the image after the
-  live test remains stable.
+- Keep the legacy Vesktop microphone identities as compatibility fallbacks and
+  add Equibop's packaged executable identity. Acceptance still requires a real
+  Equibop call to confirm the live PipeWire-Pulse properties and volume behavior.
 - Offer an opt-in HyperX user-session rule/service that keeps the source at 90%
   and selects the device by stable properties rather than a transient PipeWire
   object ID.
@@ -207,9 +208,17 @@ than guessing hardware at image-build time.
 | `install-streaming` | Install Moonlight, Sunshine, or both as user Flatpaks and run Sunshine's required host integration. |
 | `ssh-server` | Enable or disable OpenSSH together with its firewalld service. |
 | `wake-on-lan` | Configure magic-packet WOL on an explicitly selected NetworkManager Ethernet connection. |
+| `vimmite-dev` | Build, assemble, verify, replace, and remove a reproducible rootless development toolbox while retaining the shared home. |
 
 Machine-specific commands must print the changes they will make, be safe to
 rerun, and provide a matching status or undo path where practical.
+
+Development toolchains belong in the declarative `vimmite-dev` Containerfile,
+not in the immutable host. Its assemble manifest provides rootless lifecycle
+management and host bridges for the SSH agent, Git state, Zed, desktop opening,
+and nested rootless Podman workflows. The container may carry a Fedora language
+baseline, but each repository owns its actual Node, Python, Go, and Rust version
+through mise, uv, native project metadata, or a devcontainer.
 
 ## Rollback and storage model
 
@@ -219,7 +228,8 @@ rerun, and provide a matching status or undo path where practical.
 - Keep the installer/default Btrfs layout unless testing identifies a concrete
   reason to customize it.
 - Do not claim that an OS deployment rollback restores `/var` or home data; it
-  does not. Personal-data backup/snapshot tooling remains a separate decision.
+  does not. Use the separately documented encrypted Restic policy and restore
+  gate for personal data.
 - Do not port Vimmite's mutable-root Snapper setup into the image.
 
 Source: [rpm-ostree administrator handbook](https://coreos.github.io/rpm-ostree/administrator-handbook/)

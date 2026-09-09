@@ -1,0 +1,90 @@
+ARG FEDORA_VERSION=44
+FROM registry.fedoraproject.org/fedora-toolbox:${FEDORA_VERSION}
+
+LABEL org.opencontainers.image.title="Vimmite development toolbox" \
+      org.opencontainers.image.description="Reproducible polyglot development environment for Vimmite"
+
+COPY vimmite-dev.sh /etc/profile.d/vimmite-dev.sh
+COPY bootstrap-root /usr/local/share/vimmite-dev/bootstrap-root
+COPY zed-host /usr/local/share/vimmite-dev/zed-host
+
+RUN chmod 0644 /etc/profile.d/vimmite-dev.sh \
+    && chmod 0755 /usr/local/share/vimmite-dev/bootstrap-root \
+        /usr/local/share/vimmite-dev/zed-host \
+    && dnf -y install --setopt=install_weak_deps=False \
+        autoconf \
+        automake \
+        bash-completion \
+        binutils \
+        bzip2-devel \
+        ccache \
+        clang \
+        clang-tools-extra \
+        clippy \
+        cmake \
+        compiler-rt \
+        cppcheck \
+        cargo \
+        curl \
+        desktop-file-utils \
+        diffutils \
+        elfutils \
+        elfutils-libelf-devel \
+        fd-find \
+        file \
+        findutils \
+        fzf \
+        gcc \
+        gcc-c++ \
+        gdb \
+        gh \
+        git \
+        git-credential-libsecret \
+        git-lfs \
+        glibc-devel \
+        kernel-headers \
+        libffi-devel \
+        libomp-devel \
+        libstdc++-devel \
+        libtool \
+        lld \
+        lldb \
+        make \
+        meson \
+        mold \
+        ncurses-devel \
+        neovim \
+        ninja-build \
+        nodejs \
+        npm \
+        openssh-clients \
+        openssl-devel \
+        patch \
+        perf \
+        pkgconf-pkg-config \
+        python3 \
+        python3-devel \
+        python3-pip \
+        python3-setuptools \
+        python3-wheel \
+        readline-devel \
+        ripgrep \
+        rsync \
+        rust \
+        rustfmt \
+        ShellCheck \
+        sqlite-devel \
+        strace \
+        tmux \
+        tree \
+        unzip \
+        uv \
+        valgrind \
+        wget \
+        which \
+        xz-devel \
+        xdg-utils \
+        zip \
+        zlib-devel \
+        zsh \
+    && dnf clean all

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Put host bridges ahead of container binaries without modifying the user's
+# shared shell configuration.
+if [[ -x /usr/bin/distrobox-host-exec ]]; then
+    for command_name in flatpak podman rpm-ostree xdg-open; do
+        if [[ -x "/run/host/usr/bin/${command_name}" || -x "/run/host/usr/local/bin/${command_name}" ]]; then
+            ln -sfn /usr/bin/distrobox-host-exec "/usr/local/bin/${command_name}"
+        fi
+    done
+
+    if [[ -x /run/host/usr/bin/flatpak ]]; then
+        ln -sfn /usr/local/share/vimmite-dev/zed-host /usr/local/bin/zed
+    fi
+fi

@@ -3,21 +3,68 @@
 set -euo pipefail
 
 readonly brew_binary=/home/linuxbrew/.linuxbrew/bin/brew
+readonly brew_prefix=/home/linuxbrew/.linuxbrew
 readonly formulae=(
   bat
   ncdu
   fd
   tealdeer
-  eza
   jq
   dust
   procs
-  btop
   yt-dlp
   bbrew
   zoxide
   hf
 )
+readonly retired_formulae=(
+  # btop moved to the host RPM. No image script uses eza, so retire it in favor
+  # of the host-selected lsd listing tool.
+  btop
+  eza
+)
+
+# BlueBuild's shared Brew prefix is owned by the account that may modify it.
+# Follow that ownership here instead of adding another hard-coded UID. Full
+# non-1000 support remains dependent on uBlue's prefix setup and timer units.
+# The system service starts this small launcher as root, then all Brew operations
+# run with the owner's normal supplementary groups and home.
+if (( EUID == 0 )); then
+  owner_uid="$(stat -Lc %u "$brew_prefix")"
+  if [[ "$owner_uid" == 0 ]]; then
+    echo "Refusing to run Homebrew with a root-owned prefix: $brew_prefix" >&2
+    exit 1
+  fi
+
+  passwd_entry="$(getent passwd "$owner_uid" || true)"
+  if [[ -z "$passwd_entry" ]]; then
+    echo "No local account owns the Homebrew prefix (UID $owner_uid)" >&2
+    exit 1
+  fi
+
+  IFS=: read -r owner_name _ _ _ _ owner_home _ <<< "$passwd_entry"
+  exec /usr/bin/runuser --user "$owner_name" -- /usr/bin/env \
+    HOME="$owner_home" \
+    USER="$owner_name" \
+    LOGNAME="$owner_name" \
+    HOMEBREW_CELLAR="$brew_prefix/Cellar" \
+    HOMEBREW_PREFIX="$brew_prefix" \
+    HOMEBREW_REPOSITORY="$brew_prefix/Homebrew" \
+    HOMEBREW_NO_AUTO_UPDATE=1 \
+    "$0"
+fi
+
+prefix_owner_uid="$(stat -Lc %u "$brew_prefix")"
+if [[ "$EUID" != "$prefix_owner_uid" ]]; then
+  echo "Homebrew reconciliation must run as the prefix owner (UID $prefix_owner_uid)" >&2
+  exit 1
+fi
+
+for formula in "${retired_formulae[@]}"; do
+  if "$brew_binary" list --formula "$formula" >/dev/null 2>&1; then
+    "$brew_binary" uninstall --formula "$formula"
+  fi
+done
 
 for formula in "${formulae[@]}"; do
   if "$brew_binary" list --formula "$formula" >/dev/null 2>&1; then

@@ -1,4 +1,4 @@
-# Session 1 implementation findings (pre-V5 image)
+# Session 1 implementation findings (pre-V6 image)
 
 Date: 2026-08-26
 
@@ -8,7 +8,7 @@ requires booting the newly composed image.
 
 ## Fresh-host baseline
 
-The test machine was running the signed pre-V5
+The test machine was running the signed pre-V6
 `ghcr.io/linuxmunchies/vimmite3-kinoite:latest` deployment with Fedora Kinoite
 44 and kernel `7.1.10-200.fc44.x86_64`. It was not an older Vimmite deployment.
 

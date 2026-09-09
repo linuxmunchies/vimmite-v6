@@ -1,11 +1,15 @@
-# Vimmite V5
+# Vimmite V6
 
-[![BlueBuild](https://github.com/linuxmunchies/vimmite-v5/actions/workflows/build.yml/badge.svg)](https://github.com/linuxmunchies/vimmite-v5/actions/workflows/build.yml)
+<p align="center">
+  <img src="docs/assets/vimmite-logo.svg" alt="Vimmite OS compass logo" width="144">
+</p>
+
+[![BlueBuild](https://github.com/linuxmunchies/vimmite-v6/actions/workflows/build.yml/badge.svg)](https://github.com/linuxmunchies/vimmite-v6/actions/workflows/build.yml)
 
 > Vim's personal Fedora Atomic desktop: KDE, gaming, development, media, and
 > workstation tools in one reproducible AMD/Intel image.
 
-Vimmite V5 is **my OS**. It is the fifth generation of the image I use on my own
+Vimmite V6 is **my OS**. It is the sixth generation of the image I use on my own
 machines, rebuilt around Fedora Kinoite and BlueBuild so the configuration is
 reviewable, repeatable, signed, and much easier to maintain than a pile of
 post-install scripts.
@@ -16,26 +20,32 @@ is either disabled by default or exposed as an explicit `ujust` profile.
 
 ## Project status
 
-Vimmite V5 is in composition. Its prior generation completed a real fresh-install
+Vimmite V6 is in composition. Its prior generation completed a real fresh-install
 acceptance pass on a Lenovo ThinkPad T16 Gen 1 with AMD graphics, exercising
 boot, encryption, networking, audio, camera, Plasma, Flatpaks, Steam, Vulkan,
 MangoHud, Distrobox, libvirt, and atomic updates. Those results are useful
-baseline evidence, not V5 acceptance evidence.
+baseline evidence, not V6 acceptance evidence.
 
-Build and publish V5, then complete its physical acceptance checklist before
-treating it as a release. Controllers, the EPOMAKER keyboard, HyperX audio,
-real game workloads, and suspend/resume still need to be checked on each machine
-where those features matter.
+Build V6 locally, complete its physical acceptance checklist, and only then
+publish it. The release gate requires a passing run on at least one AMD portable
+system, the Strix Halo system, and the Intel/Arc system, with known limitations
+explicitly recorded. Controllers, the EPOMAKER keyboard, HyperX audio, real game
+workloads, and suspend/resume remain physical tests.
 
 The intended published image is
-[`ghcr.io/linuxmunchies/vimmite-v5-kinoite:latest`](https://github.com/linuxmunchies/vimmite-v5/pkgs/container/vimmite-v5-kinoite):
-the portable AMD/Intel Fedora Kinoite image used by Vimmite V5 systems.
+[`ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`](https://github.com/linuxmunchies/vimmite-v6/pkgs/container/vimmite-v6-kinoite):
+the portable AMD/Intel Fedora Kinoite image used by Vimmite V6 systems.
+The source repository is private. The GHCR image must be made public after its
+first approved publication for the unauthenticated installer and update commands
+below to work; otherwise each client needs separate OSTree registry credentials.
 
-## What is in Vimmite V5?
+## What is in Vimmite V6?
 
 ### Desktop and base system
 
 - Fedora 44 Kinoite and KDE Plasma on Universal Blue's standard Fedora kernel
+- Vimmite Graphite visual identity over Breeze Dark, with electric-indigo and
+  gold accents plus coordinated desktop, lock, and login artwork
 - Firefox on the host and Brave from Flathub
 - AMD and Intel graphics support; no NVIDIA-specific image content
 - LUKS-capable Atomic installation, signed OCI updates, and rollback deployments
@@ -47,7 +57,7 @@ the portable AMD/Intel Fedora Kinoite image used by Vimmite V5 systems.
 
 - Native Steam and `steam-devices`
 - 64-bit and 32-bit MangoHud
-- GameMode when pulled as Steam's normal weak dependency; Vimmite V5 adds no
+- GameMode when pulled as Steam's normal weak dependency; Vimmite V6 adds no
   GameMode launch options or global performance tuning
 - ProtonPlus and Bottles
 - Mesa's 32-bit Vulkan drivers for Proton
@@ -59,11 +69,14 @@ applications later without expanding the base image.
 
 ### Workstation and development tools
 
-- DNF: Git, Vim, Neovim, Zsh, Zim, Kitty, Inxi, rsync, Smartmontools, NVMe CLI,
-  lm_sensors, Rclone, tmux, tree, tldr, lsd, and Nerd Fonts
-- Homebrew: Bat, ncdu, fd, tealdeer, eza, jq, dust, procs, btop, yt-dlp,
+- DNF: Git, Vim, Neovim, Zsh, Zim, Kitty, Fastfetch, Inxi, rsync,
+  Smartmontools, NVMe CLI, lm_sensors, Rclone, tmux, tree, lsd, btop, Restic,
+  and Nerd Fonts
+- Homebrew: Bat, ncdu, fd, tealdeer (`tldr`), jq, dust, procs, yt-dlp,
   bbrew, zoxide, and Hugging Face's `hf` CLI
 - Podman, Distrobox, and Podman Compose
+- Declarative `vimmite-dev` toolbox with compilers, debuggers, Python/uv,
+  Node/npm, Rust/Cargo, GitHub CLI, ripgrep, fzf, and host editor/agent bridges
 - Zed from Flathub
 - QEMU/KVM, modular libvirt daemons, UEFI firmware, software TPM support, and
   the virt-manager Flatpak
@@ -77,7 +90,7 @@ applications later without expanding the base image.
 - VLC, mpv, MediaInfo, Mixxx, FLAC tools, and yt-dlp
 - OBS Studio, Kdenlive, Blender, GIMP, Krita, Gwenview, and SongRec
 - Bitwarden, Warehouse, LocalSend, OnlyOffice, Obsidian, Signal, Telegram,
-  Vesktop, Feishin, RustDesk, SyncThingy, Flatseal, Resources, Coppwr, Gear
+  Equibop, Feishin, RustDesk, SyncThingy, Flatseal, Resources, Coppwr, Gear
   Lever, and Bazaar
 
 The required application set is installed system-wide from Flathub. A quiet
@@ -121,8 +134,8 @@ package with the following command.
 Clone the repository so the signing key and documentation are available:
 
 ```bash
-git clone https://github.com/linuxmunchies/vimmite-v5.git
-cd vimmite-v5
+gh repo clone linuxmunchies/vimmite-v6
+cd vimmite-v6
 mkdir -p iso
 ```
 
@@ -131,8 +144,8 @@ Generate a Kinoite installer from the latest published primary image:
 ```bash
 sudo bluebuild generate-iso \
   --output-dir ./iso \
-  --iso-name Vimmite-V5.iso \
-  image ghcr.io/linuxmunchies/vimmite-v5-kinoite:latest
+  --iso-name Vimmite-V6.iso \
+  image ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest
 ```
 
 Generating from the published image avoids rebuilding the OS locally and is
@@ -145,7 +158,7 @@ To build the image from this checkout before creating the installer:
 ```bash
 sudo bluebuild generate-iso \
   --output-dir ./iso \
-  --iso-name Vimmite-V5-local.iso \
+  --iso-name Vimmite-V6-local.iso \
   recipe recipes/vimmite.yml
 ```
 
@@ -159,7 +172,7 @@ ISO to the USB drive. Double-check the selected device: writing an image erases
 the target drive.
 
 Boot the USB in UEFI mode, complete the Kinoite installer, configure disk
-encryption and the initial user, then reboot into Vimmite V5. Keep the encryption
+encryption and the initial user, then reboot into Vimmite V6. Keep the encryption
 passphrase available for every cold boot.
 
 ## Rebase an existing Fedora Atomic installation
@@ -168,19 +181,19 @@ This is only for an existing Atomic Fedora desktop such as Kinoite or
 Silverblue. Do not run these commands on traditional mutable Fedora.
 
 The first rebase uses the unverified transport once so the image can install
-Vimmite V5's signing policy and public key:
+Vimmite V6's signing policy and public key:
 
 ```bash
 sudo rpm-ostree rebase \
-  ostree-unverified-registry:ghcr.io/linuxmunchies/vimmite-v5-kinoite:latest
+  ostree-unverified-registry:ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest
 sudo systemctl reboot
 ```
 
-After booting Vimmite V5, move permanently to the signed transport:
+After booting Vimmite V6, move permanently to the signed transport:
 
 ```bash
 sudo rpm-ostree rebase \
-  ostree-image-signed:docker://ghcr.io/linuxmunchies/vimmite-v5-kinoite:latest
+  ostree-image-signed:docker://ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest
 sudo systemctl reboot
 ```
 
@@ -199,17 +212,40 @@ limit, so connecting Wi-Fi is sufficient and no reboot is required.
 New users start in Zsh with the image-baked Zim module tree and receive
 `~/sync`, `~/dev`, and `~/ai` automatically. Homebrew is installed at runtime by
 BlueBuild's `brew-setup` service and becomes available in interactive shells.
+Plasma starts with the Vimmite Graphite global theme and desktop wallpaper;
+the lock screen and SDDM login use the coordinated lock artwork. Kitty and
+Fastfetch inherit the matching terminal profile. All appearance settings remain
+user-selectable in System Settings.
 
-Browse every Vimmite V5 helper interactively:
+Start with the guided first-run menu, then use Doctor to verify the result:
 
 ```bash
-ujust --choose
+ujust vimmite-setup
+ujust vimmite-doctor
 ```
+
+The setup menu covers appearance, a Fedora development container, gaming and
+streaming, local-AI backends and model storage, virtualization, SSH/Wake-on-LAN,
+drive automounting, and the HyperX microphone helper. It shows the current
+state and reversal path before making optional changes. `ujust --choose` remains
+available for browsing every low-level recipe.
+
+If Doctor finds a problem, create a private diagnostic archive with `ujust
+vimmite-support-bundle`. It collects deployment, hardware, failed-service, and
+focused current/previous-boot evidence; redacts usernames, home paths, network
+addresses, and common credential forms; and excludes home-directory contents,
+browser state, environment variables, and the full journal. Always review the
+archive before sharing it.
 
 Common setup commands:
 
 | Goal | Command | Notes |
 | --- | --- | --- |
+| Guided first-run setup | `ujust vimmite-setup` | Reports state and undo guidance for every area |
+| Check system health | `ujust vimmite-doctor` | Uses green, warning, and failure results |
+| Create support evidence | `ujust vimmite-support-bundle` | Writes a mode-0600 redacted `.tar.gz` |
+| Create the development box | `ujust vimmite-dev create` | Reproducible Fedora toolbox; project versions stay project-owned |
+| Verify the development box | `ujust vimmite-dev doctor` | Compiles C/Rust and checks Python, JavaScript, editors, Git, and SSH agent |
 | Restore the image-baked Zim setup | `ujust setup-zsh` | Preserves existing `.zshrc` and `.zimrc` |
 | Use Zsh on an upgraded account | `ujust setup-zsh true` | Log out and back in afterward |
 | Prepare virtualization | `ujust setup-virtualization` | Enables the default NAT network |
@@ -261,6 +297,12 @@ sudo systemctl reboot
 Do not delete the previous deployment until the new image has passed boot,
 network, graphics, audio, suspend/resume, and any machine-specific dock tests.
 
+Deployment rollback does not protect personal files. Vimmite standardizes on
+encrypted Restic repositories for user-data backup, with a restore drill before
+release. Model downloads and game installations are excluded by default;
+irreplaceable model work and non-cloud saves must be included explicitly. See
+[the personal-data backup policy](docs/personal-data-backup.md).
+
 ## Build and test locally
 
 ### Validate the recipe
@@ -297,9 +339,10 @@ less docs/test-checklist.md
 
 ## CI, publication, and signing
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) builds Vimmite V5
-on every non-documentation push, every pull request, manual dispatch, and the
-daily schedule. Successful `main` builds publish to GHCR.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) builds proposed
+changes for pull requests without promoting them. Publishing is manual and the
+workflow requires an explicit confirmation that the V6 physical acceptance
+matrix and current-image build gate passed.
 
 The private Cosign key is stored only in the GitHub Actions secret
 `SIGNING_SECRET`. Never commit it. Only [`cosign.pub`](cosign.pub) belongs in
@@ -310,15 +353,15 @@ Verify the published primary image:
 ```bash
 cosign verify \
   --key cosign.pub \
-  ghcr.io/linuxmunchies/vimmite-v5-kinoite:latest
+  ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest
 ```
 
 Useful workflow commands for maintainers:
 
 ```bash
-gh workflow run build.yml --repo linuxmunchies/vimmite-v5
-gh run list --repo linuxmunchies/vimmite-v5 --workflow build.yml --limit 10
-gh run watch --repo linuxmunchies/vimmite-v5 <run-id> --exit-status
+gh workflow run build.yml --repo linuxmunchies/vimmite-v6 -f release_approved=true
+gh run list --repo linuxmunchies/vimmite-v6 --workflow build.yml --limit 10
+gh run watch --repo linuxmunchies/vimmite-v6 <run-id> --exit-status
 ```
 
 ## Repository map
@@ -329,10 +372,13 @@ recipes/modules/                 Hardware, packages, gaming, virtualization,
                                  configuration, and Flatpak modules
 files/scripts/                   Pinned artifact and shell installers
 files/vimmite/                   Files copied into the primary image
-files/justfiles/vimmite.just     Vimmite V5 ujust commands
+files/justfiles/vimmite.just     Vimmite V6 ujust commands
 docs/post-install.md             Optional profile instructions
+docs/development.md              Declarative development-box workflow
+docs/branding.md                 Visual identity, palette, and asset map
 docs/strix-halo-ai.md            Strix Halo llama.cpp setup and troubleshooting
 docs/strix-halo-ai-configuration.md  Strix Halo server and model configuration
+docs/personal-data-backup.md     Restic scope, exclusions, and restore gate
 docs/test-checklist.md           Physical acceptance checklist
 docs/architecture-proposal.md    Design and dependency rationale
 docs/investigation.md            Original live-system audit
@@ -342,7 +388,7 @@ cosign.pub                       Public image-verification key
 
 ## Design rules
 
-Vimmite V5 favors:
+Vimmite V6 favors:
 
 - declarative image composition over mutable post-install scripts;
 - standard Fedora/Universal Blue mechanisms over one-off workarounds;
@@ -351,7 +397,7 @@ Vimmite V5 favors:
 - signed publication and rollback-safe upgrades; and
 - preserving Vim's workflow without pretending every machine is identical.
 
-That is the point of Vimmite V5: **my desktop, my defaults, reproducibly built.**
+That is the point of Vimmite V6: **my desktop, my defaults, reproducibly built.**
 
 ## Documentation
 
@@ -359,6 +405,8 @@ That is the point of Vimmite V5: **my desktop, my defaults, reproducibly built.*
 - [Architecture and dependency rationale](docs/architecture-proposal.md)
 - [Vimmite migration inventory](docs/vimmite-migration.md)
 - [Post-install profiles](docs/post-install.md)
+- [Visual identity and brand assets](docs/branding.md)
+- [Personal-data backup policy](docs/personal-data-backup.md)
 - [Physical acceptance checklist](docs/test-checklist.md)
 - [Session 1 implementation findings](docs/session-1-findings.md)
 - [BlueBuild documentation](https://blue-build.org/)

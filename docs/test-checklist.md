@@ -1,12 +1,31 @@
-# Vimmite V5 physical test checklist
+# Vimmite V6 physical test checklist
 
 Record the image digest, machine, firmware version, Secure Boot state, and test
 date for every run. Do not promote a build until the blocking checks pass.
 
+## Release acceptance matrix
+
+Record a link or path to the completed run notes in the Evidence column. All
+three rows are blocking; static image checks do not satisfy a physical row.
+
+| System | Required coverage | Status | Evidence / known limitations |
+| --- | --- | --- | --- |
+| AMD portable system | Common installation, rollback, baseline, gaming, audio, controllers, and virtualization | [ ] Open | Not yet recorded |
+| Strix Halo system | Common coverage plus the complete local-AI and opted-in workstation profiles | [ ] Open | Not yet recorded |
+| Intel/Arc system | Common installation, rollback, baseline, Intel Vulkan/gaming, audio, and virtualization | [ ] Open | Not yet recorded |
+
+The release gate passes only when every row above has physical evidence and all
+remaining unchecked items are recorded below as explicit, accepted limitations.
+Only then manually dispatch `build.yml` with its `release_approved` confirmation;
+merges and schedules do not publish V6 automatically.
+
 ## Build artifact gate
 
 - [x] `bluebuild validate recipes/vimmite.yml` passes.
-- [x] A clean `bluebuild build --no-sign recipes/vimmite.yml` passes.
+- [x] The private V6 repository has its `SIGNING_SECRET` configured before the
+      approved release workflow is dispatched.
+- [ ] A clean `bluebuild build --no-sign recipes/vimmite.yml` passes for the
+      current change set.
 - [x] The image uses `ghcr.io/ublue-os/kinoite-main:44` and Fedora's standard
       kernel, not an OGC/Bazzite kernel.
 - [x] Firefox is present; Gamescope and NVIDIA-specific packages are absent.
@@ -37,6 +56,23 @@ rebase.
 
 ## Portable baseline on every machine
 
+- [ ] `ujust vimmite-setup` opens every Phase 2 category, accurately reports
+      enabled state, and provides a working reversal path for each optional
+      change.
+- [ ] `ujust vimmite-doctor` reports the signed origin, pending deployment
+      state, 64/32-bit Vulkan, gaming/container/virtualization components,
+      reconciliation jobs, model storage, and optional services with accurate
+      green/warning/failure severity.
+- [ ] `ujust vimmite-support-bundle` creates a mode-0600 archive whose contents
+      have been manually inspected for usernames, home paths, IP/MAC addresses,
+      credentials, browser state, and unrelated journal entries.
+- [ ] The installer/live Plasma session and a newly created user's first desktop
+      use the Vimmite wallpaper and Vimmite Graphite color scheme.
+- [ ] SDDM and the Plasma lock screen use the Vimmite lock artwork at native and
+      mixed-DPI resolutions without stretching, clipping credentials, or
+      reducing contrast.
+- [ ] Kickoff uses the Vimmite mark; Fastfetch renders the Vimmite ASCII logo;
+      Kitty uses JetBrains Mono Nerd Font, 12 px padding, and the Vimmite palette.
 - [ ] Wi-Fi, Ethernet, Bluetooth, audio, camera, keyboard, and touchpad work.
 - [ ] Suspend/resume succeeds ten consecutive times, including an overnight
       suspend where practical.
@@ -46,7 +82,21 @@ rebase.
 - [ ] A new user starts in Zsh with working Zim and `~/dev`, `~/sync`, and `~/ai`.
 - [ ] Zsh/Zim setup preserves pre-existing dotfiles on a rerun.
 - [ ] Distrobox can create, enter, update, and remove a disposable test box.
+- [ ] `ujust vimmite-dev manifest` produces a rootless assemble plan for only
+      `vimmite-dev`, and `create` builds it without layering host packages.
+- [ ] `ujust vimmite-dev doctor` passes C and Rust compilation, Python native
+      module, JavaScript, CLI-tool, Neovim, Zed bridge, desktop-launch, Git
+      configuration, and SSH-agent checks.
+- [ ] `ujust vimmite-dev update` replaces container-only state while retaining
+      a sentinel project in the shared home; `remove` retains that sentinel and
+      the reusable local image.
+- [ ] A sample Python project uses `uv.lock`, a TypeScript project uses a local
+      compiler and lockfile, and a mise/devcontainer project selects declared
+      Node, Python, Go, and Rust versions without host package layering.
 - [ ] No AI MAX TTM/GTT arguments appear on Ryzen 6550U or Intel systems.
+- [ ] An encrypted Restic backup and restore drill passes for the selected
+      personal-data scope; record repository location, snapshot ID, restored
+      sample, and the intentional exclusions without recording credentials.
 
 ## Strix Halo local AI
 
@@ -95,7 +145,11 @@ rebase.
 - [ ] `ujust hyperx-mic enable` enables the per-user path unit and is safe to rerun.
 - [ ] HyperX playback and capture appear after receiver reconnect and resume.
 - [ ] The microphone starts at 90%.
-- [ ] Vesktop cannot lower the source volume during calls or device changes.
+- [ ] During a real Equibop call, record its PipeWire-Pulse identity with
+      `pactl list source-outputs`, and confirm `application.process.binary` and
+      `application.name` match `10-mic-lock.conf`.
+- [ ] Equibop cannot lower the source volume during calls, input-device
+      changes, receiver reconnect, or resume. Retest after an Equibop update.
 - [ ] OBS, browser capture, and normal volume controls still work.
 
 ## Virtualization and optional profiles
@@ -120,3 +174,11 @@ rebase.
 Capture `rpm-ostree status`, `journalctl -b`, the previous boot journal when a
 resume fails, `inxi -Fz`, `lsusb`, `lspci -nnk`, and the exact command/output for
 the failing component. Avoid copying credentials or unrelated user data.
+
+## Accepted limitations
+
+Keep this section empty until a limitation has an owner, affected systems, a
+workaround (if any), and an explicit release decision. An unchecked blocking
+item is not implicitly accepted.
+
+- None recorded.

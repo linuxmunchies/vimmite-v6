@@ -4,7 +4,38 @@ The common image does not guess which machine it is running on. Optional or
 machine-specific behavior is exposed through `ujust` and remains off until the
 user explicitly enables it.
 
-Run `ujust --choose` to browse recipes, or use the commands below directly.
+For a new installation, start with:
+
+```bash
+ujust vimmite-setup
+```
+
+This guided menu reports whether each option is enabled and how to undo it. It
+covers desktop appearance, a development Distrobox, gaming and streaming,
+RamaLama and Strix Halo AI/model storage, virtualization, SSH/Wake-on-LAN,
+automounting, and the HyperX helper. Run `ujust --choose` to browse the
+underlying recipes, or use the commands below directly.
+
+## Health check and support evidence
+
+```bash
+ujust vimmite-doctor
+ujust vimmite-support-bundle
+```
+
+Doctor checks the signed image origin and deployment state, both Vulkan
+architectures, gaming tools, containers, libvirt, Flatpak and Homebrew
+reconciliation, model storage, and optional services. A failure exits nonzero;
+disabled opt-in services are reported as healthy optional state.
+
+The support command writes a timestamped, mode-0600 archive in the current
+directory. It includes a serial-number-free hardware summary, atomic deployment
+state, failed services, focused service logs, current-boot kernel warnings, and
+previous-boot errors when available. It does not read home-directory contents,
+browser state, environment variables, or the unrestricted journal. A final
+redaction pass replaces usernames, home paths, IP and MAC addresses, URL
+credentials, and common secret fields. Review the archive before sharing it;
+automated redaction is intentionally defense in depth, not a guarantee.
 
 ## Common user setup
 
@@ -24,6 +55,28 @@ network. Administrators in `wheel` are authorized by the image's
 polkit rule, so a separate group change and logout are not required. The command
 also grants the `qemu` service account traversal-only access to your private
 home directory so ISO images selected from `~/Downloads` can be opened.
+
+## Development box
+
+```bash
+ujust vimmite-dev create
+ujust vimmite-dev enter
+ujust vimmite-dev doctor
+```
+
+The build uses the image-shipped Containerfile and Distrobox assemble manifest,
+not mutable package layering on the host. The box includes the common compiler,
+header, debugger, Git/GitHub, ripgrep/fzf, Python/uv, Node/npm, and Rust/Cargo
+baseline. Zed and desktop launches bridge back to the host; Neovim runs inside
+the box; the shared home provides Git configuration and credentials; and the
+current SSH agent socket is forwarded.
+
+Use `ujust vimmite-dev update` after the definition changes. It replaces the
+container filesystem but retains the shared home. `ujust vimmite-dev remove`
+removes the container after confirmation and keeps both shared files and the
+reusable local image. Project-specific language versions belong in `mise.toml`,
+`uv.lock`, language-native project files, or `.devcontainer/`, not in the host
+image. See the [complete development-box guide](development.md).
 
 ## RamaLama
 

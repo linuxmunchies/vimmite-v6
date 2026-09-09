@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; bold=$'\033[1m'; reset=$'\033[0m'
+[[ -t 1 ]] || green='' yellow='' red='' bold='' reset=''
+warnings=0
+failures=0
+
+ok() { printf '%s[OK]%s %s\n' "${green}" "${reset}" "$*"; }
+warn() { warnings=$((warnings + 1)); printf '%s[WARN]%s %s\n' "${yellow}" "${reset}" "$*"; }
+fail() { failures=$((failures + 1)); printf '%s[FAIL]%s %s\n' "${red}" "${reset}" "$*"; }
+section() { printf '\n%s%s%s\n' "${bold}" "$*" "${reset}"; }
+
+has_package() { rpm -q "$1" >/dev/null 2>&1; }
+has_command() { command -v "$1" >/dev/null 2>&1; }
+
+check_command() {
+    local label="$1" command_name="$2"
+    has_command "${command_name}" && ok "${label} is available" || fail "${label} is missing"
+}
+
+check_unit() {
+    local label="$1" unit="$2" expected="${3:-active}"
+    if ! systemctl cat "${unit}" >/dev/null 2>&1; then warn "${label}: unit not installed"; return; fi
+    if [[ "${expected}" == optional ]]; then
+        if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then
+            systemctl is-active --quiet "${unit}" 2>/dev/null && ok "${label}: enabled and active" || fail "${label}: enabled but not active"
+        else
+            ok "${label}: disabled (optional; enable through vimmite-setup)"
+        fi
+    elif systemctl is-active --quiet "${unit}" 2>/dev/null; then
+        ok "${label}: active"
+    else
+        fail "${label}: not active"
+    fi
+}
+
+check_user_unit() {
+    local label="$1" unit="$2"
+    if ! systemctl --user cat "${unit}" >/dev/null 2>&1; then warn "${label}: user unit not installed"; return; fi
+    if systemctl --user is-enabled --quiet "${unit}" 2>/dev/null; then
+        systemctl --user is-active --quiet "${unit}" 2>/dev/null && ok "${label}: enabled and active" || fail "${label}: enabled but not active"
+    else
+        ok "${label}: disabled (optional; enable through vimmite-setup)"
+    fi
+}
+
+check_reconciliation() {
+    local label="$1" unit="$2" scope="${3:-system}" state result
+    local -a systemctl_command=(systemctl)
+    [[ "${scope}" == user ]] && systemctl_command+=(--user)
+    if ! "${systemctl_command[@]}" cat "${unit}" >/dev/null 2>&1; then warn "${label}: unit not installed"; return; fi
+    state="$("${systemctl_command[@]}" is-failed "${unit}" 2>/dev/null || true)"
+    result="$("${systemctl_command[@]}" show "${unit}" --property=Result --value 2>/dev/null || true)"
+    if [[ "${state}" == failed || ( -n "${result}" && "${result}" != success ) ]]; then
+        fail "${label} failed (result: ${result:-unknown})"
+    else
+        ok "${label} has no recorded failure"
+    fi
+}
+
+section "Image and deployment"
+if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    ok "${PRETTY_NAME:-Vimmite}; image version ${IMAGE_VERSION:-${VERSION_ID:-unknown}}"
+else
+    fail "/etc/os-release is unavailable"
+fi
+
+if has_command rpm-ostree; then
+    status_json="$(rpm-ostree status --json 2>/dev/null || true)"
+    if [[ -n "${status_json}" ]] && has_command jq; then
+        booted_origin="$(jq -r '.deployments[] | select(.booted == true) | (."container-image-reference" // .origin // "unknown")' <<<"${status_json}" | head -n1)"
+        booted_version="$(jq -r '.deployments[] | select(.booted == true) | (.version // .checksum[0:12] // "unknown")' <<<"${status_json}" | head -n1)"
+        [[ "${booted_origin}" == ostree-image-signed:* ]] && ok "Signed origin: ${booted_origin}" || fail "Booted origin is not signed: ${booted_origin}"
+        ok "Booted deployment: ${booted_version}"
+        pending="$(jq '[.deployments[] | select(.booted != true)] | length' <<<"${status_json}" 2>/dev/null || echo 0)"
+        staged="$(jq '[.deployments[] | select(.staged == true)] | length' <<<"${status_json}" 2>/dev/null || echo 0)"
+        cached_update="$(jq -r '."cached-update" != null' <<<"${status_json}" 2>/dev/null || echo false)"
+        transaction="$(jq -r '.transaction // empty' <<<"${status_json}" 2>/dev/null || true)"
+        if [[ "${staged}" -gt 0 ]]; then
+            warn "An update is staged; reboot to use it"
+        elif [[ "${cached_update}" == true ]]; then
+            warn "An update is available but has not been staged"
+        else
+            ok "No pending deployment or cached update"
+        fi
+        [[ -n "${transaction}" ]] && warn "An rpm-ostree transaction is still in progress: ${transaction}" || ok "No deployment transaction is in progress"
+        [[ "${pending}" -gt 0 ]] && ok "${pending} rollback/other deployment(s) retained" || warn "No rollback deployment is retained"
+    else
+        warn "Could not inspect deployment JSON"
+        rpm-ostree status 2>/dev/null || true
+    fi
+else
+    fail "rpm-ostree is unavailable"
+fi
+
+section "Graphics and Vulkan"
+gpu_line="$(lspci 2>/dev/null | grep -Ei 'VGA|3D controller|Display controller' | head -n1 || true)"
+[[ -n "${gpu_line}" ]] && ok "GPU: ${gpu_line}" || fail "No display GPU was reported by lspci"
+if has_command vulkaninfo; then
+    vulkan_summary="$(vulkaninfo --summary 2>&1 || true)"
+    vk_device="$(sed -nE 's/^[[:space:]]*deviceName[[:space:]]*=[[:space:]]*//p' <<<"${vulkan_summary}" | grep -Eiv 'llvmpipe|lavapipe|software rasterizer' | head -n1 || true)"
+    if [[ -n "${vk_device}" ]]; then
+        ok "64-bit Vulkan works: ${vk_device}"
+    elif grep -Eqi 'llvmpipe|lavapipe|software rasterizer' <<<"${vulkan_summary}"; then
+        fail "Vulkan enumerated only a software renderer"
+    else
+        fail "vulkaninfo could not enumerate a GPU"
+    fi
+else
+    fail "vulkaninfo is unavailable"
+fi
+# TODO(V6 follow-up): exercise a 32-bit Vulkan workload here. This currently
+# verifies the multilib package payload only; the physical checklist remains
+# the runtime acceptance gate.
+if has_package mesa-vulkan-drivers.i686 && rpm -ql mesa-vulkan-drivers.i686 2>/dev/null | grep -Eq '^/usr/lib(/[^/]*)?/libvulkan_.*\.so'; then
+    ok "32-bit Vulkan loader/driver files are installed"
+else
+    fail "32-bit Vulkan is incomplete (mesa-vulkan-drivers.i686 or driver files missing)"
+fi
+
+section "Gaming"
+has_package steam && ok "Native Steam is installed" || fail "Native Steam is missing"
+has_package mangohud.x86_64 && ok "MangoHud 64-bit is installed" || fail "MangoHud 64-bit is missing"
+has_package mangohud.i686 && ok "MangoHud 32-bit is installed" || fail "MangoHud 32-bit is missing"
+has_command gamemoderun && ok "GameMode is available" || warn "GameMode is not installed (Steam may run without it)"
+
+section "Containers and virtualization"
+check_command "Podman" podman
+if has_command podman; then
+    podman info >/dev/null 2>&1 && ok "Rootless Podman responds" || fail "Rootless Podman is not healthy"
+fi
+check_command "Distrobox" distrobox
+if has_command podman && podman container exists vimmite-dev >/dev/null 2>&1; then
+    dev_image="$(podman inspect --format '{{.ImageName}}' vimmite-dev 2>/dev/null || true)"
+    [[ "${dev_image}" == localhost/vimmite-dev:44 ]] && ok "vimmite-dev matches the declarative image" || warn "vimmite-dev uses ${dev_image:-an unknown image}; run 'ujust vimmite-dev update'"
+else
+    ok "vimmite-dev is not created (optional; use vimmite-setup when wanted)"
+fi
+check_unit "libvirt QEMU socket" virtqemud.socket
+check_unit "libvirt network socket" virtnetworkd.socket
+if has_command virsh; then
+    virsh --connect qemu:///system uri >/dev/null 2>&1 && ok "libvirt qemu:///system is reachable" || fail "libvirt qemu:///system is not reachable"
+fi
+
+section "Flatpak reconciliation and model storage"
+check_reconciliation "System Flatpak reconciliation" system-flatpak-setup.service
+check_reconciliation "User Flatpak reconciliation" user-flatpak-setup.service user
+check_reconciliation "Vimmite Homebrew reconciliation" vimmite-brew-packages.service
+model_store="${RAMALAMA_STORE:-${HOME}/ai/models}"
+if [[ -d "${model_store}" ]]; then
+    store_free="$(df -hP "${model_store}" 2>/dev/null | awk 'NR == 2 {print $4}')"
+    [[ -w "${model_store}" ]] && ok "Model storage is writable (${store_free:-unknown} free): ${model_store}" || fail "Model storage is not writable: ${model_store}"
+else
+    warn "Model storage does not exist yet: ${model_store} (create it through vimmite-setup)"
+fi
+
+section "Optional services"
+check_unit "LACT GPU daemon" lactd.service
+check_unit "Input Remapper" input-remapper.service
+check_unit "Labeled-drive automount" ublue-os-media-automount.service optional
+check_unit "SSH server" sshd.service optional
+check_user_unit "HyperX microphone helper" vimmite-hyperx-mic-volume.path
+for app in com.moonlight_stream.Moonlight dev.lizardbyte.app.Sunshine; do
+    if flatpak list --app --columns=application 2>/dev/null | grep -Fxq "${app}"; then ok "Optional Flatpak installed: ${app}"; else ok "Optional Flatpak not installed: ${app}"; fi
+done
+
+printf '\n%sSummary:%s %s failure(s), %s warning(s)\n' "${bold}" "${reset}" "${failures}" "${warnings}"
+if (( failures > 0 )); then
+    echo "Run 'ujust vimmite-support-bundle' before asking for support."
+    exit 1
+elif (( warnings > 0 )); then
+    echo "The system is usable, but the warnings above deserve review."
+else
+    ok "All checked components are healthy"
+fi

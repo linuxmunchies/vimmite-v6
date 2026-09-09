@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+usage() {
+    echo "Usage: vimmite-support-bundle [OUTPUT.tar.gz]"
+    echo "Collects a redacted Vimmite diagnostic archive."
+}
+
+if [[ "${1:-}" == "--help" ]]; then usage; exit 0; fi
+if (( $# > 1 )); then usage >&2; exit 2; fi
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+output="${1:-${PWD}/vimmite-support-${timestamp}.tar.gz}"
+case "${output}" in
+    *.tar.gz) ;;
+    *) echo "Output must end in .tar.gz" >&2; exit 2 ;;
+esac
+output="$(realpath -m "${output}")"
+if [[ -e "${output}" ]]; then
+    echo "Refusing to overwrite existing output: ${output}" >&2
+    exit 1
+fi
+workdir="$(mktemp -d /tmp/vimmite-support.XXXXXX)"
+bundle_dir="${workdir}/vimmite-support"
+mkdir -p "${bundle_dir}"
+trap 'rm -rf -- "${workdir}"' EXIT
+
+redact() {
+    local user_name home_escaped user_escaped
+    user_name="$(id -un)"
+    user_escaped="$(sed 's/[][\.^$*+?(){}|/]/\\&/g' <<<"${user_name}")"
+    home_escaped="$(sed 's/[][\.^$*+?(){}|/]/\\&/g' <<<"${HOME}")"
+    sed -E \
+        -e "s#${home_escaped}#<home>#g" \
+        -e "s#(^|[^[:alnum:]_.-])${user_escaped}([^[:alnum:]_.-]|$)#\\1<user>\\2#g" \
+        -e 's#(/home/)[^/[:space:]]+#\1<user>#g' \
+        -e 's#([A-Za-z][A-Za-z0-9+.-]*://)[^/@[:space:]]+:[^/@[:space:]]+@#\1<credentials>@#g' \
+        -e 's/((token|password|passwd|secret|api[_-]?key|authorization)[[:space:]]*[:=][[:space:]]*).*/\1<redacted>/I' \
+        -e 's/(bearer[[:space:]]+)[A-Za-z0-9._~+\/=-]+/\1<redacted>/gI' \
+        -e 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/<mac>/g' \
+        -e 's/(([0-9]{1,3}\.){3}[0-9]{1,3})(\/[0-9]{1,2})?/<ip>/g' \
+        -e 's/(^|[^[:alnum:]_:])::[[:xdigit:]:.]+/\1<ip6>/g' \
+        -e 's/(^|[^[:alnum:]_:])([[:xdigit:]]{1,4}:){0,6}[[:xdigit:]]{1,4}::[[:xdigit:]:.]*/\1<ip6>/g' \
+        -e 's/(^|[^[:alnum:]_:])([[:xdigit:]]{1,4}:){3,7}[[:xdigit:]]{1,4}/\1<ip6>/g'
+}
+
+collect() {
+    local destination="$1"
+    shift
+    {
+        printf '$'
+        printf ' %q' "$@"
+        printf '\n'
+        "$@" 2>&1 || true
+    } | redact > "${bundle_dir}/${destination}"
+}
+
+collect_shell() {
+    local destination="$1" description="$2" command_text="$3"
+    {
+        printf '$ %s\n' "${description}"
+        bash -o pipefail -c "${command_text}" 2>&1 || true
+    } | redact > "${bundle_dir}/${destination}"
+}
+
+cat > "${bundle_dir}/README.txt" <<'EOF'
+Vimmite redacted support bundle
+
+This archive intentionally excludes home-directory contents, browser state,
+environment variables, network configuration, disk serial numbers, credentials,
+and the complete system journal. Usernames, home paths, IP addresses, and MAC
+addresses are redacted again after collection. Review every file before sharing.
+EOF
+
+collect os-release cat /etc/os-release
+collect hardware-inxi.txt inxi -Fz --no-host
+collect hardware-pci.txt lspci -nnk
+collect hardware-usb.txt lsusb
+collect hardware-block.txt lsblk -e 7 -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS
+collect deployment-rpm-ostree.txt rpm-ostree status
+command -v bootc >/dev/null 2>&1 && collect deployment-bootc.txt bootc status
+collect failed-system-services.txt systemctl --failed --no-pager --full
+collect failed-user-services.txt systemctl --user --failed --no-pager --full
+
+units=(
+    system-flatpak-setup.service
+    user-flatpak-setup.service
+    vimmite-brew-packages.service
+    lactd.service
+    input-remapper.service
+    virtqemud.socket
+    virtnetworkd.socket
+    ublue-os-media-automount.service
+    sshd.service
+)
+collect_shell current-boot-services.log "journalctl current boot for Vimmite-related units" \
+    "journalctl -b --no-hostname --no-pager -o short-monotonic $(printf -- '--unit=%q ' "${units[@]}")"
+collect_shell current-boot-kernel-warnings.log "journalctl current boot kernel warnings" \
+    "journalctl -b --dmesg --priority=warning --no-hostname --no-pager -o short-monotonic"
+if journalctl --list-boots --no-pager 2>/dev/null | awk '{print $1}' | grep -Fxq -- -1; then
+    collect_shell previous-boot-services.log "journalctl previous boot for Vimmite-related units" \
+        "journalctl -b -1 --no-hostname --no-pager -o short-monotonic $(printf -- '--unit=%q ' "${units[@]}")"
+    collect_shell previous-boot-kernel-errors.log "journalctl previous boot kernel errors" \
+        "journalctl -b -1 --dmesg --priority=err --no-hostname --no-pager -o short-monotonic"
+fi
+
+mkdir -p "$(dirname "${output}")"
+tar -C "${workdir}" -czf "${output}" vimmite-support
+chmod 0600 "${output}"
+printf 'Created redacted support bundle: %s\n' "${output}"
+echo "Review the archive before sharing; automated redaction cannot guarantee removal of every sensitive value."

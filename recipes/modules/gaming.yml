@@ -6,7 +6,7 @@ modules:
     install:
       packages:
         # kinoite-main already carries the Fedora Multimedia repository used
-        # for native Steam, so Vimmite V5 does not add a gaming repository.
+        # for native Steam, so Vimmite V6 does not add a gaming repository.
         - steam
         - mangohud.x86_64
         - mangohud.i686

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Vimmite OS</title>
+  <desc id="description">A gold compass ring surrounding an electric-indigo letter V.</desc>
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe08a"/>
+      <stop offset="0.45" stop-color="#f6c453"/>
+      <stop offset="1" stop-color="#d59624"/>
+    </linearGradient>
+    <linearGradient id="indigo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256" cy="256" r="172" fill="#15161c" stroke="url(#gold)" stroke-width="30"/>
+  <path fill="url(#gold)" d="M256 20l24 72h-48zm0 472l-24-72h48zM20 256l72-24v48zm472 0l-72 24v-48z"/>
+  <path fill="url(#indigo)" stroke="#a5b4fc" stroke-width="6" stroke-linejoin="round"
+        d="M134 154h66l56 174 56-174h66L289 382h-66z"/>
+  <circle cx="256" cy="256" r="13" fill="#f6c453"/>
+</svg>

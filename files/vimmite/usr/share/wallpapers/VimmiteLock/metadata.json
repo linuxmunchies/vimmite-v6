@@ -1,0 +1,12 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Vimmite OS"
+            }
+        ],
+        "Id": "VimmiteLock",
+        "Name": "Vimmite Lock Screen",
+        "License": "LicenseRef-Vimmite-Brand-Assets"
+    }
+}

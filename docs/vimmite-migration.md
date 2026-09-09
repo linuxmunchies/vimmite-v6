@@ -14,7 +14,7 @@ upstream guidance remain open until those sources are verified.
 | `02-media-and-drivers.sh` | Multimedia packages, AMD/Intel acceleration, and fonts |
 | `03-gaming.sh` | Steam stack, gaming tuning, and a fixed game-drive mount |
 | `04-user-environment.sh` | Flatpaks, Brave, Zsh, fonts, keyboard, audio, and user directories |
-| `Archives/Vimmite_V5_old.sh` | Earlier ROCm, Kickstart Neovim, application, and directory ideas |
+| Archived previous-generation monolith | Earlier ROCm, Kickstart Neovim, application, and directory ideas |
 
 The active scripts contain no explicit Proton installation, Gamescope,
 emulation stack, controller driver, Distrobox setup, Wake-on-LAN setup, or SSH
@@ -35,7 +35,7 @@ These are confirmed requirements. Their old implementation is not approved.
 - Zsh as the preferred interactive shell, using Zim rather than Vimmite's
   generated `zsh-kick` configuration.
 - Firefox as a guaranteed browser and Brave delivered as a Flatpak.
-- The declared Vimmite V5 GUI application set on every machine.
+- The declared Vimmite V6 GUI application set on every machine.
 - Multimedia playback/creation and the codecs needed by the retained
   applications, implemented appropriately for the selected base.
 
@@ -128,16 +128,16 @@ These appear useful but need pruning against the base image and actual use.
 
 - Whether the fixed PipeWire quantum configuration produces a real benefit for
   the user's workloads; it should not be described as universally optimal.
-- The microphone-volume block is confirmed as useful on the HyperX host. Live inspection showed
-  Vesktop reporting `application.process.binary = "vesktop.bin"` and
-  `application.name = "vesktop"`; the replacement rule matches both and a user
-  path unit restores the HyperX source to 90%. It is now explicitly enabled per
-  user with `ujust hyperx-mic enable`, so unrelated systems carry no active
-  HyperX watcher. Treat this as provisionally accepted and reopen it if real
-  calls expose another volume change path.
-- Personal-data snapshots and backups remain undecided. The required bootloader
-  OS rollback is already the atomic deployment model and should not be conflated
-  with Btrfs data snapshots.
+- The microphone-volume block is confirmed as useful on the HyperX host. The
+  prior live inspection showed Vesktop reporting
+  `application.process.binary = "vesktop.bin"` and `application.name =
+  "vesktop"`. Equibop replaced Vesktop, so a real Equibop call must confirm the
+  new live identity and volume behavior. The user path unit remains an explicit
+  opt-in through `ujust hyperx-mic enable`.
+- Personal-data backup uses encrypted Restic repositories and a tested restore
+  drill, separately from bootloader OS rollback. Re-downloadable model weights,
+  game installations, containers, and caches are excluded by default; see
+  `docs/personal-data-backup.md` for the selected policy.
 - Whether Anki, Element, LibreWolf, Video Downloader, Strawberry, Spotify, or
   KWallet Manager from older Vimmite revisions are still wanted.
 - Neovim configuration is intentionally deferred. Install Vim and Neovim but do

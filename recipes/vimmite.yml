@@ -1,8 +1,8 @@
 ---
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
 
-name: vimmite-v5-kinoite
-description: "Vimmite V5: portable AMD/Intel KDE Atomic image for gaming and workstation use."
+name: vimmite-v6-kinoite
+description: "Vimmite V6: portable AMD/Intel KDE Atomic image for gaming and workstation use."
 
 base-image: ghcr.io/ublue-os/kinoite-main
 image-version: 44

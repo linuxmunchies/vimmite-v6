@@ -1,0 +1,10 @@
+[General]
+ColorScheme=VimmiteGraphite
+
+[Icons]
+Theme=breeze-dark
+
+[KDE]
+ColorScheme=VimmiteGraphite
+LookAndFeelPackage=org.vimmite.desktop
+widgetStyle=Breeze

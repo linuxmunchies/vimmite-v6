@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly BOX_NAME="vimmite-dev"
+readonly IMAGE_NAME="localhost/vimmite-dev:44"
+readonly DEVBOX_ROOT="${VIMMITE_DEVBOX_ROOT:-/usr/share/vimmite/devbox}"
+readonly CONTAINERFILE="${DEVBOX_ROOT}/Containerfile"
+readonly ASSEMBLE_FILE="${DEVBOX_ROOT}/distrobox.ini"
+
+usage() {
+    cat <<'EOF'
+Usage: ujust vimmite-dev [action]
+
+  create          Build the local image if needed and assemble vimmite-dev
+  build           Rebuild the local development image
+  update          Rebuild the image and replace the box; shared home is kept
+  enter [args]    Enter the box, optionally passing a command
+  status          Show image, container, integration, and version state
+  doctor          Check tools, integration, and representative compilers
+  mise            Optionally install mise to ~/.local/bin (shared with host)
+  export-app APP  Export an installed container desktop app to the host menu
+  unexport-app APP Remove a previously exported container desktop app
+  manifest        Show the declarative assemble plan without changing anything
+  remove [--yes]  Remove the box; the local image and shared home are kept
+
+Node, Python, Go, and Rust project versions belong in mise.toml, uv.lock,
+language-native project files, or a repository devcontainer—not in Vimmite.
+EOF
+}
+
+die() { echo "error: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "required host command is missing: $1"; }
+
+assert_rootless() {
+    (( EUID != 0 )) || die "run this as your desktop user, not root"
+    if [[ -n "${SUDO_USER-}" || -n "${DOAS_USER-}" ]]; then
+        die "do not use sudo; vimmite-dev uses rootless Podman and your shared home"
+    fi
+}
+
+check_definition() {
+    [[ -r "${CONTAINERFILE}" ]] || die "missing ${CONTAINERFILE}"
+    [[ -r "${ASSEMBLE_FILE}" ]] || die "missing ${ASSEMBLE_FILE}"
+    grep -Fqx "[${BOX_NAME}]" "${ASSEMBLE_FILE}" || die "assemble definition does not contain ${BOX_NAME}"
+    grep -Fqx "image=${IMAGE_NAME}" "${ASSEMBLE_FILE}" || die "assemble image does not match ${IMAGE_NAME}"
+}
+
+check_host() {
+    assert_rootless
+    check_definition
+    need podman
+    need distrobox
+    podman info >/dev/null 2>&1 || die "rootless Podman is not responding"
+}
+
+image_exists() { podman image exists "${IMAGE_NAME}" >/dev/null 2>&1; }
+box_exists() { podman container exists "${BOX_NAME}" >/dev/null 2>&1; }
+in_box() { distrobox enter --name "${BOX_NAME}" -- "$@"; }
+
+build_image() {
+    check_host
+    podman build --pull=always \
+        --build-arg FEDORA_VERSION=44 \
+        --tag "${IMAGE_NAME}" \
+        --file "${CONTAINERFILE}" \
+        "${DEVBOX_ROOT}"
+}
+
+create_box() {
+    check_host
+    image_exists || build_image
+    if command -v podman >/dev/null 2>&1 && box_exists; then
+        echo "${BOX_NAME} already exists. Run 'ujust vimmite-dev update' to rebuild and replace it."
+    else
+        distrobox assemble create --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}"
+    fi
+    echo "${BOX_NAME} is ready. Enter with: ujust vimmite-dev enter"
+}
+
+update_box() {
+    check_host
+    build_image
+    distrobox assemble create --replace --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}"
+    echo "${BOX_NAME} was rebuilt. Files in the shared home directory were retained."
+}
+
+status_box() {
+    check_definition
+    printf 'Definition: %s\nImage:      %s (%s)\nContainer:  %s (%s)\n' \
+        "${ASSEMBLE_FILE}" "${IMAGE_NAME}" "$(command -v podman >/dev/null && image_exists && echo built || echo absent)" \
+        "${BOX_NAME}" "$(command -v podman >/dev/null && box_exists && echo present || echo absent)"
+    if box_exists; then
+        actual_image="$(podman inspect --format '{{.ImageName}}' "${BOX_NAME}" 2>/dev/null || true)"
+        printf 'Box image:  %s\n' "${actual_image:-unknown}"
+        [[ "${actual_image}" == "${IMAGE_NAME}" ]] || echo "Warning: the existing box predates or differs from this definition; run update."
+    fi
+    echo "Home:       shared with the host"
+    echo "Versions:   project-owned through mise/uv/devcontainers"
+    echo "Undo:       ujust vimmite-dev remove"
+}
+
+doctor_box() {
+    check_host
+    image_exists || die "development image is absent; run 'ujust vimmite-dev create'"
+    box_exists || die "development box is absent; run 'ujust vimmite-dev create'"
+    in_box bash -s <<'EOF'
+set -uo pipefail
+failures=0
+warnings=0
+ok() { printf '[OK] %s\n' "$*"; }
+warn() { warnings=$((warnings + 1)); printf '[WARN] %s\n' "$*"; }
+fail() { failures=$((failures + 1)); printf '[FAIL] %s\n' "$*"; }
+check() { command -v "$1" >/dev/null 2>&1 && ok "$1" || fail "$1 is missing"; }
+
+echo 'Development tools'
+for command_name in gcc g++ clang cmake meson ninja gdb lldb valgrind strace rg fzf gh git nvim python3 uv node npm rustc cargo; do
+    check "${command_name}"
+done
+command -v mise >/dev/null 2>&1 && ok "mise (optional)" || warn "mise is not installed; run 'ujust vimmite-dev mise' if wanted"
+command -v tsc >/dev/null 2>&1 && ok "tsc" || ok "TypeScript compiler is project-local (use npm/mise/devcontainer)"
+
+echo
+echo 'Host integration'
+[[ -n "${SSH_AUTH_SOCK:-}" && -S "${SSH_AUTH_SOCK}" ]] && ok "SSH agent socket" || warn "SSH agent socket is not available in this session"
+[[ -r "${HOME}/.gitconfig" ]] && ok "shared Git configuration" || warn "no shared ~/.gitconfig yet"
+command -v zed >/dev/null 2>&1 && ok "Zed host launcher" || warn "Zed host launcher unavailable"
+[[ "$(command -v xdg-open 2>/dev/null)" == /usr/local/bin/xdg-open ]] && ok "host desktop launcher" || warn "xdg-open is not bridged to the host"
+
+echo
+echo 'Smoke tests'
+test_dir="$(mktemp -d /tmp/vimmite-dev-doctor.XXXXXX)"
+trap 'rm -rf -- "${test_dir}"' EXIT
+cd "${test_dir}"
+printf 'int main(void){return 0;}\n' | gcc -x c - -o c-test && ./c-test && ok "C compilation" || fail "C compilation"
+printf 'fn main(){}\n' > main.rs
+rustc main.rs -o rust-test && ./rust-test && ok "Rust compilation" || fail "Rust compilation"
+python3 -c 'import ssl, sqlite3' && ok "Python runtime and common native modules" || fail "Python runtime"
+node -e 'process.exit(0)' && ok "JavaScript runtime" || fail "JavaScript runtime"
+
+printf '\nSummary: %s failure(s), %s warning(s)\n' "${failures}" "${warnings}"
+(( failures == 0 ))
+EOF
+}
+
+install_mise() {
+    check_host
+    box_exists || die "create the development box first"
+    if in_box bash -lc 'command -v mise >/dev/null 2>&1'; then
+        in_box bash -lc 'mise --version'
+        echo "mise is already installed. Language versions remain controlled by each project."
+        return
+    fi
+    [[ -t 0 ]] || die "mise installation needs an interactive terminal"
+    echo "This downloads mise's official checksum-verifying installer and writes the binary to ~/.local/bin."
+    read -r -p "Install mise? [y/N] " answer
+    [[ "${answer}" =~ ^[Yy]$ ]] || { echo "No changes made."; return; }
+    in_box bash -s <<'EOF'
+set -euo pipefail
+installer="$(mktemp /tmp/mise-install.XXXXXX)"
+trap 'rm -f -- "${installer}"' EXIT
+curl -fsSL https://mise.run -o "${installer}"
+sh "${installer}"
+EOF
+    in_box "${HOME}/.local/bin/mise" --version
+    echo "Use 'mise use <language>@<version>' inside a project so the version is recorded with that project."
+}
+
+export_app() {
+    local app_name="${1:-}"
+    [[ -n "${app_name}" ]] || die "usage: ujust vimmite-dev export-app APP"
+    box_exists || die "create the development box first"
+    in_box distrobox-export --app "${app_name}"
+}
+
+unexport_app() {
+    local app_name="${1:-}"
+    [[ -n "${app_name}" ]] || die "usage: ujust vimmite-dev unexport-app APP"
+    box_exists || die "development box is absent"
+    in_box distrobox-export --app "${app_name}" --delete
+}
+
+remove_box() {
+    check_host
+    if ! box_exists; then echo "${BOX_NAME} is already absent."; return; fi
+    if [[ "${1:-}" != --yes ]]; then
+        [[ -t 0 ]] || die "refusing non-interactive removal without --yes"
+        echo "This removes the container filesystem. Projects and configuration in the shared home directory are kept."
+        read -r -p "Remove ${BOX_NAME}? [y/N] " answer
+        [[ "${answer}" =~ ^[Yy]$ ]] || { echo "No changes made."; return; }
+    fi
+    distrobox assemble rm --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}"
+    echo "${BOX_NAME} was removed. The reusable image remains; undo by running 'ujust vimmite-dev create'."
+}
+
+action="${1:-create}"
+shift || true
+case "${action}" in
+    create) create_box ;;
+    build) build_image ;;
+    update|upgrade) update_box ;;
+    enter)
+        check_host
+        box_exists || die "create the development box first"
+        if (( $# > 0 )); then
+            exec distrobox enter --name "${BOX_NAME}" -- "$@"
+        else
+            exec distrobox enter --name "${BOX_NAME}"
+        fi
+        ;;
+    status) status_box ;;
+    doctor) doctor_box ;;
+    mise) install_mise ;;
+    export-app) export_app "${1:-}" ;;
+    unexport-app) unexport_app "${1:-}" ;;
+    manifest) check_host; distrobox assemble create --dry-run --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}" ;;
+    remove|rm) remove_box "${1:-}" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; die "unknown action: ${action}" ;;
+esac

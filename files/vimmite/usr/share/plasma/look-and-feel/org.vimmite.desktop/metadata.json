@@ -1,0 +1,16 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Vimmite OS"
+            }
+        ],
+        "Category": "",
+        "Description": "Vimmite graphite theme, based on Breeze Dark",
+        "Id": "org.vimmite.desktop",
+        "License": "GPL-2.0-or-later",
+        "Name": "Vimmite Graphite",
+        "Website": "https://github.com/linuxmunchies/vimmite-v6"
+    }
+}

@@ -11,12 +11,14 @@ install:
     - neovim
     - kitty
     - inxi
+    - fastfetch
     - unzip
     - rclone
     - tmux
     - tree
     - lsd
     - btop
+    - restic
     
     # Storage, health, and hardware diagnostics
     - rsync

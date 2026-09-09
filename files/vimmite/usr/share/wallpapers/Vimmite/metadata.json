@@ -1,0 +1,12 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Vimmite OS"
+            }
+        ],
+        "Id": "Vimmite",
+        "Name": "Vimmite OS",
+        "License": "LicenseRef-Vimmite-Brand-Assets"
+    }
+}
