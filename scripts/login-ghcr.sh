@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Optional Skopeo login for a private GHCR package.
+# Public ghcr.io/linuxmunchies/vimmite-v6-kinoite pulls do not need this.
 
 set -Eeuo pipefail
 
@@ -29,4 +31,4 @@ printf 'Logging Skopeo in to GHCR as %s...\n' "$username"
 gh auth token --hostname github.com \
   | skopeo login ghcr.io --username "$username" --password-stdin
 
-printf 'GHCR login complete. You can now run scripts/build-iso.sh published.\n'
+printf 'GHCR login complete. Use this only when the package is private; public pulls do not need it.\n'

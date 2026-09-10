@@ -26,7 +26,8 @@ Usage:
 
 Modes:
   local       Build the recipe in this checkout (default).
-  published   Download the configured image from GHCR.
+  published   Download the configured image from GHCR (anonymous when the
+              package is public; run scripts/login-ghcr.sh only if unauthorized).
 
 Options:
   --reuse-archive   Reuse the validated archive in the work directory.

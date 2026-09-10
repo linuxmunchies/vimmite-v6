@@ -38,8 +38,9 @@ image's intended hardware scope.
 
 The image is published to
 [`ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`](https://github.com/linuxmunchies/vimmite-v6/pkgs/container/vimmite-v6-kinoite).
-The GHCR package must be public for downloads and updates without credentials;
-source-repository visibility alone does not provide that access.
+The container package on GHCR must be public for anonymous downloads and
+`rpm-ostree` updates. Making the GitHub source repository public does not
+make the package public.
 
 Start with the [installation guide](docs/installation.md), which covers building
 an ISO, installing it, or rebasing an existing Fedora Atomic desktop. ISO builds
@@ -95,7 +96,7 @@ code conventions. Physical testing remains separate from automatic publication.
 | `files/vimmite/usr/libexec/` | Runtime helpers behind the setup commands |
 | `files/justfiles/` | Discoverable `ujust` commands and small shell recipes |
 | `files/scripts/` | Build-time installers for pinned external artifacts |
-| `scripts/` | Repository validation, ISO builds, and registry login |
+| `scripts/` | Repository validation, ISO builds, and optional GHCR login |
 | `docs/` | Installation, configuration, design, and testing guides |
 | `docs/history/` | Historical investigations and migration notes |
 | `.github/` | Build workflow, ownership, and dependency updates |

@@ -49,8 +49,15 @@ validated archive:
 scripts/build-iso.sh --reuse-archive --iso-name vimmite-v6-kinoite-retry.iso
 ```
 
-To use the published image instead of composing the checkout, authenticate
-while the GHCR package is private and select published mode:
+To use the published image instead of composing the checkout, select published
+mode. The GHCR package is public, so this pull does not need registry login:
+
+```bash
+scripts/build-iso.sh published
+```
+
+If Skopeo reports unauthorized access, the package is private again (source
+repository visibility does not control that). Then authenticate and retry:
 
 ```bash
 scripts/login-ghcr.sh
@@ -87,9 +94,21 @@ passphrase available for every cold boot.
 This is only for an existing Atomic Fedora desktop such as Kinoite or
 Silverblue. Do not run these commands on traditional mutable Fedora.
 
-While the GHCR package is private, the installed system also needs a
-revocable personal access token (classic) scoped only to `read:packages`.
-Store it in OSTree's root-only credential file before rebasing or updating:
+Rebase and `rpm-ostree upgrade` pull the public GHCR package and do not need
+`/etc/ostree/auth.json`. Source-repository visibility is independent of that;
+keep the container package public if you want unattended updates without
+credentials.
+
+If an existing install still has `/etc/ostree/auth.json` from the
+private-package period and you no longer need it:
+
+```bash
+sudo rm /etc/ostree/auth.json
+```
+
+Only if the GHCR package is private again, install a revocable personal access
+token (classic) scoped only to `read:packages` in OSTree's root-only credential
+file before rebasing or updating:
 
 ```bash
 read -rsp 'GHCR read token: ' GHCR_TOKEN; echo
@@ -101,9 +120,7 @@ sudo chmod 600 /etc/ostree/auth.json
 ```
 
 Use a dedicated token rather than a broad GitHub CLI credential. Remove the
-file with `sudo rm /etc/ostree/auth.json` to revoke local access after revoking
-the token on GitHub. This setup is unnecessary if the package is made public;
-the repository itself can remain private.
+file with `sudo rm /etc/ostree/auth.json` after revoking the token on GitHub.
 
 The first rebase uses the unverified transport once so the image can install
 Vimmite V6's signing policy and public key:
