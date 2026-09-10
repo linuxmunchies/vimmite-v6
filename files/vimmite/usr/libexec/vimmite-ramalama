@@ -32,9 +32,9 @@ readonly -a CATALOG=(
     'gemma|Gemma 4 26B-A4B, Unsloth Dynamic Q4_K_XL|hf://unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL|unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf'
     'laguna|Laguna XS 2.1, Q4_K_M|hf://ggml-org/Laguna-XS-2.1-GGUF:Q4_K_M|'
     'granite|Granite 4.2 8B, Q4_K_M|hf://bartowski/granite-4.2-8b-GGUF:Q4_K_M|random/granite4.2-8b/granite-4.2-8b-Q4_K_M.gguf'
-    'nemotron|NVIDIA Nemotron 3.5 Lightning 30B-A3B, Unsloth Dynamic Q4_K_XL|hf://unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:UD-Q4_K_XL|'
-    'liquid|Liquid LFM2.5 8B-A1B, Q4_K_M|hf://LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M|'
-    'north|Cohere North Mini Code 1.0, Unsloth Dynamic Q4_K_M|hf://unsloth/North-Mini-Code-1.0-GGUF:UD-Q4_K_M|'
+    'nemotron|NVIDIA Nemotron 3.5 Lightning 30B-A3B, Unsloth Dynamic Q4_K_XL|hf://unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:UD-Q4_K_XL|unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL.gguf'
+    'liquid|Liquid LFM2.5 8B-A1B, Q4_K_M|hf://LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M|LiquidAI/LFM2.5-8B-A1B-GGUF/LFM2.5-8B-A1B-Q4_K_M.gguf'
+    'north|Cohere North Mini Code 1.0, Unsloth Dynamic Q4_K_M|hf://unsloth/North-Mini-Code-1.0-GGUF:UD-Q4_K_M|unsloth/North-Mini-Code-1.0-GGUF/North-Mini-Code-1.0-UD-Q4_K_M.gguf'
 )
 
 catalog_row() {
@@ -177,7 +177,7 @@ nas_available() {
     rclone_smb lsd "$(nas_remote)" --contimeout 8s --timeout 15s >/dev/null 2>&1
 }
 
-nas_file_size() {
+nas_object_size() {
     local relpath="$1" json size
     json="$(rclone_smb lsjson "$(nas_remote)/${relpath}" --contimeout 15s --timeout 30s 2>/dev/null)" || return 1
     size="$(jq -r '.[0].Size // empty' <<<"${json}")"
@@ -185,21 +185,54 @@ nas_file_size() {
     printf '%s\n' "${size}"
 }
 
+# Catalog entries may name repo/file.gguf while the share stores a Hugging Face
+# snapshot tree. Prefer the exact path, then search that repo for the filename.
+nas_resolve() {
+    local requested="$1" dir base found
+    if nas_object_size "${requested}" >/dev/null; then
+        printf '%s\n' "${requested}"
+        return 0
+    fi
+    dir="$(dirname "${requested}")"
+    base="$(basename "${requested}")"
+    [[ "${dir}" != "." && -n "${base}" ]] || return 1
+    found=""
+    while IFS= read -r found; do
+        [[ -n "${found}" ]] && break
+    done < <(rclone_smb lsf "$(nas_remote)/${dir}" --recursive --files-only --include "${base}" --contimeout 20s --timeout 60s)
+    [[ -n "${found}" ]] || return 1
+    printf '%s\n' "${dir}/${found}"
+}
+
+nas_file_size() {
+    local resolved
+    resolved="$(nas_resolve "$1")" || return 1
+    nas_object_size "${resolved}"
+}
+
 nas_ls_dirs() {
-    local prefix="$1" line
+    local prefix="$1" line name
     while IFS= read -r line; do
         [[ -n "${line}" ]] || continue
-        printf '%s\n' "${line%/}"
+        name="${line%/}"
+        case "${name}" in
+            blobs|refs|snapshots|.cache) continue ;;
+        esac
+        printf '%s\n' "${name}"
     done < <(rclone_smb lsf "$(nas_remote)/${prefix}" --dirs-only --contimeout 15s --timeout 30s)
 }
 
 nas_ls_ggufs() {
-    local prefix="$1" line
+    local prefix="$1" recursive="${2:-}" line
+    local -a flags=(--files-only)
+    if [[ "${recursive}" == recursive ]]; then
+        flags+=(--recursive --include '*.gguf' --include '*.GGUF')
+    fi
     while IFS= read -r line; do
         [[ -n "${line}" ]] || continue
         [[ "${line}" == *.gguf || "${line}" == *.GGUF ]] || continue
         printf '%s\n' "${line}"
-    done < <(rclone_smb lsf "$(nas_remote)/${prefix}" --files-only --contimeout 15s --timeout 30s)
+    done < <(rclone_smb lsf "$(nas_remote)/${prefix}" "${flags[@]}" --contimeout 20s --timeout 60s)
 }
 
 copy_from_nas() {
@@ -235,12 +268,13 @@ pull_file() {
 }
 
 pull_nas_path() {
-    local relpath="$1" dest size
+    local requested="$1" relpath dest size
+    relpath="$(nas_resolve "${requested}")" || die "Not found on the NAS: ${requested}"
     if model_is_local "$(basename "${relpath}")"; then
         log "Already local: $(basename "${relpath}")"
         return 0
     fi
-    size="$(nas_file_size "${relpath}")" || die "Not found on the NAS: ${relpath}"
+    size="$(nas_object_size "${relpath}")" || die "Not found on the NAS: ${relpath}"
     require_free_bytes $((size + SAFETY_BYTES))
     dest="${INCOMING_DIR}/$(basename "${relpath}")"
     if [[ -f "${dest}" ]] && [[ "$(stat -c %s "${dest}")" == "${size}" ]]; then
@@ -354,15 +388,15 @@ browse_nas_and_pull() {
     fi
     model="${choice}"
 
-    mapfile -t files < <(nas_ls_ggufs "${publisher}/${model}")
+    mapfile -t files < <(nas_ls_ggufs "${publisher}/${model}" recursive)
     (( ${#files[@]} > 0 )) || die "No GGUF files under ${publisher}/${model}."
     choices=()
     for file in "${files[@]}"; do
-        [[ "${file}" == mmproj* || "${file}" == *mmproj* ]] && continue
+        [[ "$(basename "${file}")" == mmproj* || "$(basename "${file}")" == *mmproj* ]] && continue
         choices+=("${file}")
     done
     for file in "${files[@]}"; do
-        [[ "${file}" == mmproj* || "${file}" == *mmproj* ]] || continue
+        [[ "$(basename "${file}")" == mmproj* || "$(basename "${file}")" == *mmproj* ]] || continue
         choices+=("${file}")
     done
     choices+=("Back")
@@ -587,9 +621,9 @@ NAS defaults (override with environment variables):
   RAMALAMA_NAS_PASS (empty; the share is treated as public)
 
 On this NAS the catalog maps to:
-  qwen, ornith, gemma, granite
-Laguna XS, Nemotron 3.5 Lightning, Liquid LFM2.5 8B, and North Mini Code are
-not on the share; pull those from Hugging Face or browse other NAS GGUFs.
+  qwen, ornith, gemma, granite, nemotron, liquid, north
+Laguna XS 2.1 is not on the share (only Laguna-S is); pull it from Hugging Face
+or browse other NAS GGUFs.
 
 Store: ${RAMALAMA_STORE}
 CLI:   ${RAMALAMA_BIN}
