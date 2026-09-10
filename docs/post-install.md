@@ -92,11 +92,10 @@ not download weights.
 
 Pulls can come from Hugging Face or from the public SMB share `//10.1.1.5/ai`
 (Unraid `/mnt/user/ai`, guest access). Automatic mode copies a catalog GGUF
-from the NAS when it is present and otherwise uses Hugging Face. Every catalog
-model except Laguna XS 2.1 currently lives on that share. Laguna XS is still
-Hugging Face only (the share has Laguna-S, which is a different model).
-Override the share with `RAMALAMA_NAS_HOST`, `RAMALAMA_NAS_SHARE`,
-`RAMALAMA_NAS_USER`, and `RAMALAMA_NAS_PASS`.
+from the NAS when it is present and otherwise uses Hugging Face. All eight
+catalog models currently live on that share. Override the share with
+`RAMALAMA_NAS_HOST`, `RAMALAMA_NAS_SHARE`, `RAMALAMA_NAS_USER`, and
+`RAMALAMA_NAS_PASS`.
 
 ```bash
 ujust ramalama setup

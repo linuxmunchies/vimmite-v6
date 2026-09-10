@@ -19,7 +19,9 @@ install:
     - lsd
     - btop
     - restic
-    
+    # setcap/getcap for the build-time btop CAP_PERFMON script
+    - libcap
+
     # Storage, health, and hardware diagnostics
     - rsync
     - smartmontools

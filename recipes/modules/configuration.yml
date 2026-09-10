@@ -11,6 +11,8 @@ modules:
     scripts:
       - install-nerd-fonts.sh
       - install-zimfw.sh
+      # After packages.yml installs btop. A later RPM replace would drop the cap.
+      - enable-btop-perfmon.sh
 
   - type: justfiles
 
