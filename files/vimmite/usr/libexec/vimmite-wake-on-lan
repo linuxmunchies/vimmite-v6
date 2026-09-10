@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+network_interface="${1:-}"
+if [[ -z "${network_interface}" ]]; then
+    nmcli --fields DEVICE,TYPE,STATE,CONNECTION device status
+    echo "Usage: ujust wake-on-lan <interface> [status|enable|disable]"
+    exit 0
+fi
+
+if [[ "$(nmcli --get-values GENERAL.TYPE device show "${network_interface}")" != "ethernet" ]]; then
+    echo "${network_interface} is not an Ethernet interface." >&2
+    exit 1
+fi
+
+connection="$(nmcli --get-values GENERAL.CONNECTION device show "${network_interface}")"
+if [[ -z "${connection}" || "${connection}" == "--" ]]; then
+    echo "${network_interface} has no active NetworkManager connection." >&2
+    exit 1
+fi
+
+case "${2:-status}" in
+    enable)
+        if ! ethtool "${network_interface}" | grep -Eq 'Supports Wake-on:.*g'; then
+            echo "${network_interface} does not report magic-packet Wake-on-LAN support." >&2
+            exit 1
+        fi
+        sudo nmcli connection modify "${connection}" 802-3-ethernet.wake-on-lan magic
+        echo "Wake-on-LAN is set to magic packets for '${connection}'. It applies after reconnect or reboot."
+        ;;
+    disable)
+        sudo nmcli connection modify "${connection}" 802-3-ethernet.wake-on-lan default
+        echo "Wake-on-LAN for '${connection}' is restored to NetworkManager's default."
+        ;;
+    status)
+        nmcli --fields 802-3-ethernet.wake-on-lan connection show "${connection}"
+        ethtool "${network_interface}" | grep -E 'Supports Wake-on:|Wake-on:' || true
+        ;;
+    *)
+        echo "Usage: ujust wake-on-lan <interface> [status|enable|disable]" >&2
+        exit 2
+        ;;
+esac

@@ -9,7 +9,8 @@ readonly ROCM_IMAGE="docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-10.0"
 readonly MODEL_ROOT="${STRIX_HALO_AI_MODEL_ROOT:-${HOME}/ai/models}"
 readonly USER_BIN_DIR="${STRIX_HALO_AI_BIN_DIR:-${HOME}/.local/bin}"
 readonly USER_DATA_DIR="${STRIX_HALO_AI_DATA_DIR:-${HOME}/.local/share/strix-halo-ai}"
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly WRAPPER_SOURCE="${SCRIPT_DIR}/vimmite-strix-halo-wrapper"
 readonly WRAPPER_RUNNER="${USER_DATA_DIR}/runner"
 readonly ROUTER_PRESETS_SOURCE="${SCRIPT_DIR}/vimmite-strix-halo-router-presets.ini"
@@ -312,7 +313,7 @@ router_pids() {
 }
 
 stop_router_backend() {
-    local backend="$1" container attempt
+    local backend="$1" container _attempt
     local -a pids=()
     require_commands
     container="$(backend_container "${backend}")"
@@ -335,7 +336,7 @@ stop_router_backend() {
     if ! container_exec "${container}" kill -TERM "${pids[@]}"; then
         warn "One or more ${backend} router processes had already exited."
     fi
-    for attempt in {1..5}; do
+    for _attempt in {1..5}; do
         sleep 1
         mapfile -t pids < <(router_pids "${container}")
         if (( ${#pids[@]} == 0 )); then

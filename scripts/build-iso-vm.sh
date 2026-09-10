@@ -134,7 +134,8 @@ if ! printf '%s  %s\n' "$CLOUD_IMAGE_SHA256" "$CLOUD_IMAGE" | sha256sum -c --sta
   mv -f -- "${CLOUD_IMAGE}.download" "$CLOUD_IMAGE"
 fi
 
-readonly VM_DIR="$(mktemp -d "${WORK_DIR}/vm.XXXXXX")"
+VM_DIR="$(mktemp -d "${WORK_DIR}/vm.XXXXXX")"
+readonly VM_DIR
 readonly VM_OUTPUT_DIR="${VM_DIR}/output"
 readonly VM_DISK="${VM_DIR}/builder.qcow2"
 readonly VM_SEED="${VM_DIR}/seed.iso"

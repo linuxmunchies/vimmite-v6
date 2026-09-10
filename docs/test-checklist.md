@@ -1,12 +1,14 @@
 # Vimmite V6 physical test checklist
 
 Record the image digest, machine, firmware version, Secure Boot state, and test
-date for every run. Do not promote a build until the blocking checks pass.
+date for every run. Use this checklist to record hardware confidence and known
+limitations; it does not gate automatic image publication.
 
-## Release acceptance matrix
+## Hardware acceptance matrix
 
 Record a link or path to the completed run notes in the Evidence column. All
-three rows are blocking; static image checks do not satisfy a physical row.
+three rows describe the intended coverage; static image checks do not satisfy
+a physical row.
 
 | System | Required coverage | Status | Evidence / known limitations |
 | --- | --- | --- | --- |
@@ -14,16 +16,14 @@ three rows are blocking; static image checks do not satisfy a physical row.
 | Strix Halo system | Common coverage plus the complete local-AI and opted-in workstation profiles | [ ] Open | Not yet recorded |
 | Intel/Arc system | Common installation, rollback, baseline, Intel Vulkan/gaming, audio, and virtualization | [ ] Open | Not yet recorded |
 
-The release gate passes only when every row above has physical evidence and all
-remaining unchecked items are recorded below as explicit, accepted limitations.
-Only then manually dispatch `build.yml` with its `release_approved` confirmation;
-merges and schedules do not publish V6 automatically.
+Mark a row complete only when it has physical evidence, and record remaining
+unchecked items as known limitations. Pushes and scheduled builds publish
+automatically; completing this matrix is not a workflow approval step.
 
 ## Build artifact gate
 
 - [x] `bluebuild validate recipes/vimmite.yml` passes.
-- [x] The private V6 repository has its `SIGNING_SECRET` configured before the
-      approved release workflow is dispatched.
+- [x] The repository has its `SIGNING_SECRET` configured for image publication.
 - [ ] A clean `bluebuild build --no-sign recipes/vimmite.yml` passes for the
       current change set.
 - [x] The image uses `ghcr.io/ublue-os/kinoite-main:44` and Fedora's standard
@@ -177,8 +177,8 @@ the failing component. Avoid copying credentials or unrelated user data.
 
 ## Accepted limitations
 
-Keep this section empty until a limitation has an owner, affected systems, a
-workaround (if any), and an explicit release decision. An unchecked blocking
-item is not implicitly accepted.
+Record each known limitation with its owner, affected systems, and workaround
+(if any). Unchecked items remain unverified; automatic publication does not
+turn them into passing hardware results.
 
 - None recorded.

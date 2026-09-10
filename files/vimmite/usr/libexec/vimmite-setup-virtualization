@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sockets=(
+    virtqemud.socket
+    virtnetworkd.socket
+    virtstoraged.socket
+    virtsecretd.socket
+    virtnodedevd.socket
+    virtnwfilterd.socket
+)
+
+sudo systemctl enable --now "${sockets[@]}"
+
+# The installer creates private home directories (0700). Grant only the
+# qemu service account directory traversal so libvirt can open ISO images
+# selected from ~/Downloads; this does not permit listing the home folder.
+if getent passwd qemu >/dev/null; then
+    sudo setfacl --modify u:qemu:--x "${HOME}"
+fi
+
+if sudo virsh net-info default >/dev/null 2>&1; then
+    sudo virsh net-autostart default
+    if ! sudo virsh net-info default | grep -q '^Active:.*yes'; then
+        sudo virsh net-start default
+    fi
+else
+    echo "The libvirt default network was not found." >&2
+    exit 1
+fi
+
+virsh --connect qemu:///system uri
+echo "Virtualization is ready for this administrator account."

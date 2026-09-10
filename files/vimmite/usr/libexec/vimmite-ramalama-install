@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly ramalama_cli_dir="${1:-${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}}"
+readonly ramalama_user_bin_dir="${2:-${RAMALAMA_USER_BIN_DIR:-${HOME}/.local/bin}}"
+readonly ramalama_bin="${3:-${RAMALAMA_BIN:-${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}/bin/ramalama}}"
+readonly ramalama_store="${4:-${RAMALAMA_STORE:-${HOME}/ai/models}}"
+
+if [[ ! -x "${ramalama_cli_dir}/bin/python" ]]; then
+    python3 -m venv "${ramalama_cli_dir}"
+fi
+"${ramalama_cli_dir}/bin/python" -m pip install --upgrade pip
+"${ramalama_cli_dir}/bin/python" -m pip install --upgrade ramalama 'huggingface_hub[cli]'
+
+# Keep the executable at a conventional user-local path. The symlink is
+# updated on every install/update, so it follows future upgrades.
+mkdir -p "${ramalama_user_bin_dir}"
+ln -sfn "${ramalama_bin}" "${ramalama_user_bin_dir}/ramalama"
+
+# ujust cannot alter its caller's environment. Ensure new Zsh terminals
+# find the standard user-local bin directory.
+zshrc="${HOME}/.zshrc"
+path_line='export PATH="$HOME/.local/bin:$PATH"'
+if ! [[ -f "${zshrc}" ]] || ! grep -Fqx "${path_line}" "${zshrc}"; then
+    {
+        echo
+        echo '# RamaLama command path (managed by Vimmite)'
+        echo "${path_line}"
+    } >> "${zshrc}"
+    echo "Added ~/.local/bin to ${zshrc}; open a new terminal to use 'ramalama'."
+fi
+
+"${ramalama_bin}" version
+echo "Installed without sudo. 'ramalama' is available at ${ramalama_user_bin_dir}/ramalama."
+echo "Models will be stored in: ${ramalama_store}"

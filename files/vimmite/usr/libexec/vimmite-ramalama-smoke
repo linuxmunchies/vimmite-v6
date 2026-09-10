@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly ramalama_bin="${1:-${RAMALAMA_BIN:-${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}/bin/ramalama}}"
+readonly ramalama_store="${2:-${RAMALAMA_STORE:-${HOME}/ai/models}}"
+readonly ramalama_backend="${3:-${RAMALAMA_BACKEND:-vulkan}}"
+readonly ramalama_ngl="${4:-${RAMALAMA_NGL:-auto}}"
+readonly ramalama_liquid="${5:-hf://LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M}"
+
+echo "This checks the Vulkan container path with a 2K context and 24 generated tokens."
+echo "It requires ramalama-pull-liquid to have completed first."
+command -v jq >/dev/null || { echo "jq is required for the local-model check." >&2; exit 1; }
+if ! "${ramalama_bin}" --store "${ramalama_store}" list --json | jq -e --arg repo "LiquidAI/LFM2.5-8B-A1B-GGUF" --arg tag "Q4_K_M" 'any(.[]; (.name | contains($repo)) and (.name | ascii_upcase | contains($tag)))' >/dev/null; then
+    echo "The Liquid Q4_K_M model is not fully local. Run ramalama-pull-liquid first." >&2
+    exit 1
+fi
+RAMALAMA_CONTAINER_ENGINE=podman "${ramalama_bin}" --store "${ramalama_store}" run --backend "${ramalama_backend}" --ngl "${ramalama_ngl}" --runtime-args="-c 2048 -n 24" "${ramalama_liquid}" "Reply with exactly: Vulkan works."

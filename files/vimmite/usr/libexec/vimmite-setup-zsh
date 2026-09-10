@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+user_name="$(id -un)"
+user_home="$(getent passwd "${user_name}" | cut -d: -f6)"
+template_dir="/usr/share/vimmite/zim"
+
+if [[ ! -d "${user_home}/.zim" ]]; then
+    cp -a "${template_dir}/skel/.zim" "${user_home}/.zim"
+    echo "Installed the image-baked Zim modules in ${user_home}/.zim"
+else
+    echo "Keeping existing ${user_home}/.zim"
+fi
+
+if [[ ! -e "${user_home}/.zimrc" ]]; then
+    install -m 0644 "${template_dir}/zimrc" "${user_home}/.zimrc"
+    echo "Installed ${user_home}/.zimrc"
+else
+    echo "Keeping existing ${user_home}/.zimrc"
+fi
+
+if [[ ! -e "${user_home}/.zshrc" ]]; then
+    install -m 0644 "${template_dir}/zshrc" "${user_home}/.zshrc"
+    echo "Installed ${user_home}/.zshrc"
+else
+    echo "Keeping existing ${user_home}/.zshrc"
+fi
+
+ZIM_HOME="${user_home}/.zim" \
+ZIM_CONFIG_FILE="${user_home}/.zimrc" \
+    zsh -c 'source /usr/share/vimmite/zim/zimfw.zsh init'
+
+if [[ "${1:-false}" == "true" ]]; then
+    sudo usermod --shell /usr/bin/zsh "${user_name}"
+    echo "Zsh will be the login shell after the next login."
+else
+    echo "Zim is ready. Run 'ujust setup-zsh true' to also select Zsh as the login shell."
+fi

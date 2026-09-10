@@ -14,8 +14,51 @@ concurrency:
   # only run one build at a time
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
   cancel-in-progress: true
+env:
+  # Keep schema validation and image builds on the same CLI release.
+  BLUEBUILD_VERSION: v0.9.37
+
 jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck python3-yaml
+          tools_dir="${RUNNER_TEMP}/vimmite-tools"
+          mkdir -p "$tools_dir"
+          curl --fail --location --retry 3 \
+            https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz \
+            --output "$tools_dir/just.tar.gz"
+          printf '%s  %s\n' \
+            '4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d' \
+            "$tools_dir/just.tar.gz" | sha256sum --check --strict
+          tar -xzf "$tools_dir/just.tar.gz" -C "$tools_dir" just
+          docker create --name bluebuild-validator "ghcr.io/blue-build/cli:${BLUEBUILD_VERSION}-installer"
+          trap 'docker rm -f bluebuild-validator >/dev/null' EXIT
+          docker cp bluebuild-validator:/out/bluebuild "$tools_dir/bluebuild"
+          chmod +x "$tools_dir/bluebuild"
+          echo "$tools_dir" >> "$GITHUB_PATH"
+      - name: Check Bash syntax
+        run: python3 scripts/check.py bash
+      - name: Check ShellCheck
+        run: python3 scripts/check.py shellcheck
+      - name: Check Justfiles and recipe commands
+        run: python3 scripts/check.py just
+      - name: Validate BlueBuild recipes and local inputs
+        run: python3 scripts/check.py recipes
+
   bluebuild:
+    needs: validate
     name: Build Vimmite V6 image
     runs-on: ubuntu-latest
     permissions:
@@ -33,6 +76,9 @@ jobs:
         uses: blue-build/github-action@v1.12
         with:
           recipe: ${{ matrix.recipe }}
+          cli_version: ${{ env.BLUEBUILD_VERSION }}
+          push: ${{ github.event_name != 'pull_request' }}
+          build_opts: ${{ github.event_name == 'pull_request' && '--no-sign' || '' }}
           cosign_private_key: ${{ secrets.SIGNING_SECRET }}
           registry_token: ${{ github.token }}
           pr_event_number: ${{ github.event.number }}
