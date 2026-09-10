@@ -118,7 +118,7 @@ ramalama_cmd() {
 }
 
 available_bytes() {
-    local probe="${1:-${RAMALAMA_STORE}}" available_kib
+    local probe="${RAMALAMA_STORE}" available_kib
     while [[ ! -e "${probe}" ]]; do
         probe="$(dirname "${probe}")"
         [[ "${probe}" != "/" ]] || break
