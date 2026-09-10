@@ -155,4 +155,3 @@ Deployment rollback does not protect personal files. Vimmite standardizes on
 encrypted Restic repositories for user-data backup, with a restore drill before relying on the backup. Model downloads and game installations are excluded by default;
 irreplaceable model work and non-cloud saves must be included explicitly. See
 [the personal-data backup policy](personal-data-backup.md).
-
