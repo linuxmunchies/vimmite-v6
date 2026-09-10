@@ -1,0 +1,659 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Combined RamaLama manager. ujust ramalama opens a menu; subcommands cover
+# setup, pull, run, list, and smoke. Install and setup are the same action.
+
+readonly RAMALAMA_STORE="${RAMALAMA_STORE:-${HOME}/ai/models}"
+readonly RAMALAMA_CLI_DIR="${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}"
+readonly RAMALAMA_BIN="${RAMALAMA_BIN:-${RAMALAMA_CLI_DIR}/bin/ramalama}"
+readonly RAMALAMA_USER_BIN_DIR="${RAMALAMA_USER_BIN_DIR:-${HOME}/.local/bin}"
+readonly RAMALAMA_BACKEND="${RAMALAMA_BACKEND:-vulkan}"
+readonly RAMALAMA_NGL="${RAMALAMA_NGL:-auto}"
+readonly RAMALAMA_CONTEXT="${RAMALAMA_CONTEXT:-4096}"
+readonly NAS_HOST="${RAMALAMA_NAS_HOST:-10.1.1.5}"
+readonly NAS_SHARE="${RAMALAMA_NAS_SHARE:-ai}"
+readonly NAS_USER="${RAMALAMA_NAS_USER:-guest}"
+readonly NAS_PASS="${RAMALAMA_NAS_PASS:-}"
+readonly INCOMING_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/vimmite-ramalama/incoming"
+readonly SAFETY_BYTES=$((5 * 1024 * 1024 * 1024))
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+# id|label|huggingface URI|NAS path relative to the ai share, empty if absent
+readonly -a CATALOG=(
+    'qwen|Qwen3.5 35B-A3B, Unsloth Dynamic Q4_K_XL|hf://unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL|unsloth/Qwen3.5-35B-A3B-GGUF/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf'
+    'ornith|Ornith 1.5 9B, Q4_K_M|hf://ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M|random/Ornith1.5-9b/Ornith-1.5-9B-Q4_K_M.gguf'
+    'gemma|Gemma 4 26B-A4B, Unsloth Dynamic Q4_K_XL|hf://unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL|unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf'
+    'laguna|Laguna XS 2.1, Q4_K_M|hf://ggml-org/Laguna-XS-2.1-GGUF:Q4_K_M|'
+    'granite|Granite 4.2 8B, Q4_K_M|hf://bartowski/granite-4.2-8b-GGUF:Q4_K_M|random/granite4.2-8b/granite-4.2-8b-Q4_K_M.gguf'
+    'nemotron|NVIDIA Nemotron 3.5 Lightning 30B-A3B, Unsloth Dynamic Q4_K_XL|hf://unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:UD-Q4_K_XL|'
+    'liquid|Liquid LFM2.5 8B-A1B, Q4_K_M|hf://LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M|'
+    'north|Cohere North Mini Code 1.0, Unsloth Dynamic Q4_K_M|hf://unsloth/North-Mini-Code-1.0-GGUF:UD-Q4_K_M|'
+)
+
+catalog_row() {
+    local id="$1" row
+    for row in "${CATALOG[@]}"; do
+        if [[ "${row%%|*}" == "${id}" ]]; then
+            printf '%s\n' "${row}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+catalog_field() {
+    local id="$1" field="$2" row label hf nas
+    row="$(catalog_row "${id}")" || return 1
+    IFS='|' read -r _ label hf nas <<<"${row}"
+    case "${field}" in
+        label) printf '%s\n' "${label}" ;;
+        hf) printf '%s\n' "${hf}" ;;
+        nas) printf '%s\n' "${nas}" ;;
+        *) return 1 ;;
+    esac
+}
+
+catalog_ids() {
+    local row
+    for row in "${CATALOG[@]}"; do
+        printf '%s\n' "${row%%|*}"
+    done
+}
+
+is_catalog_id() {
+    catalog_row "$1" >/dev/null
+}
+
+pause_menu() {
+    [[ -t 0 ]] || return 0
+    read -r -p "Press Enter to return to the menu..." _
+}
+
+choose() {
+    local prompt="$1"
+    shift
+    local selection
+    if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        printf '\n%s\n' "${prompt}" >&2
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return 0; }
+            echo "Choose a number from the list." >&2
+        done
+    fi
+}
+
+require_commands() {
+    local missing=0 command_name
+    for command_name in "$@"; do
+        if ! command -v "${command_name}" >/dev/null 2>&1; then
+            printf 'ERROR: %s is required.\n' "${command_name}" >&2
+            missing=1
+        fi
+    done
+    (( missing == 0 )) || die "Install the missing tools through the image, not rpm-ostree layering."
+}
+
+require_ramalama() {
+    require_commands jq
+    if [[ ! -x "${RAMALAMA_BIN}" ]]; then
+        die "RamaLama is not installed in ${RAMALAMA_CLI_DIR}. Run: ujust ramalama setup"
+    fi
+}
+
+ramalama_cmd() {
+    require_ramalama
+    env RAMALAMA_CONTAINER_ENGINE=podman "${RAMALAMA_BIN}" --store "${RAMALAMA_STORE}" "$@"
+}
+
+available_bytes() {
+    local probe="${1:-${RAMALAMA_STORE}}" available_kib
+    while [[ ! -e "${probe}" ]]; do
+        probe="$(dirname "${probe}")"
+        [[ "${probe}" != "/" ]] || break
+    done
+    available_kib="$(df -Pk "${probe}" | awk 'NR == 2 { print $4 }')"
+    printf '%s\n' $((available_kib * 1024))
+}
+
+require_free_bytes() {
+    local needed="$1" available
+    available="$(available_bytes)"
+    if (( available < needed )); then
+        die "Need about $(( (needed + 1024 * 1024 * 1024 - 1) / 1024 / 1024 / 1024 )) GiB free in ${RAMALAMA_STORE}; only $(( available / 1024 / 1024 / 1024 )) GiB is free. Set RAMALAMA_STORE to a larger filesystem."
+    fi
+}
+
+model_is_local() {
+    local needle="$1"
+    ramalama_cmd list --json 2>/dev/null | jq -e --arg n "${needle}" 'any(.[]; (.name | ascii_downcase | contains($n | ascii_downcase)))' >/dev/null
+}
+
+preflight_cmd() {
+    "${SCRIPT_DIR}/vimmite-ramalama-preflight" "${RAMALAMA_STORE}" "${RAMALAMA_BACKEND}" "${RAMALAMA_NGL}" "${RAMALAMA_CONTEXT}"
+}
+
+setup_cmd() {
+    preflight_cmd
+    "${SCRIPT_DIR}/vimmite-ramalama-install" "${RAMALAMA_CLI_DIR}" "${RAMALAMA_USER_BIN_DIR}" "${RAMALAMA_BIN}" "${RAMALAMA_STORE}"
+    log "RamaLama is ready. Pull models with: ujust ramalama pull"
+}
+
+list_cmd() {
+    ramalama_cmd list
+}
+
+smoke_cmd() {
+    "${SCRIPT_DIR}/vimmite-ramalama-smoke" "${RAMALAMA_BIN}" "${RAMALAMA_STORE}" "${RAMALAMA_BACKEND}" "${RAMALAMA_NGL}" "$(catalog_field liquid hf)"
+}
+
+rclone_smb() {
+    require_commands rclone
+    local obscured
+    obscured="$(rclone obscure "${NAS_PASS}")"
+    env RCLONE_CONFIG=/dev/null \
+        RCLONE_SMB_HOST="${NAS_HOST}" \
+        RCLONE_SMB_USER="${NAS_USER}" \
+        RCLONE_SMB_PASS="${obscured}" \
+        rclone --log-level ERROR "$@"
+}
+
+nas_remote() {
+    printf '%s\n' ":smb:${NAS_SHARE}"
+}
+
+nas_available() {
+    rclone_smb lsd "$(nas_remote)" --contimeout 8s --timeout 15s >/dev/null 2>&1
+}
+
+nas_file_size() {
+    local relpath="$1" json size
+    json="$(rclone_smb lsjson "$(nas_remote)/${relpath}" --contimeout 15s --timeout 30s 2>/dev/null)" || return 1
+    size="$(jq -r '.[0].Size // empty' <<<"${json}")"
+    [[ -n "${size}" && "${size}" != "null" ]] || return 1
+    printf '%s\n' "${size}"
+}
+
+nas_ls_dirs() {
+    local prefix="$1" line
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        printf '%s\n' "${line%/}"
+    done < <(rclone_smb lsf "$(nas_remote)/${prefix}" --dirs-only --contimeout 15s --timeout 30s)
+}
+
+nas_ls_ggufs() {
+    local prefix="$1" line
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        [[ "${line}" == *.gguf || "${line}" == *.GGUF ]] || continue
+        printf '%s\n' "${line}"
+    done < <(rclone_smb lsf "$(nas_remote)/${prefix}" --files-only --contimeout 15s --timeout 30s)
+}
+
+copy_from_nas() {
+    local relpath="$1" dest="$2"
+    mkdir -p "$(dirname "${dest}")"
+    log "Copying //${NAS_HOST}/${NAS_SHARE}/${relpath} -> ${dest}"
+    rclone_smb copyto "$(nas_remote)/${relpath}" "${dest}" --progress --retries 5 --contimeout 15s --timeout 0
+    [[ -f "${dest}" ]] || die "NAS copy finished without creating ${dest}."
+}
+
+pull_hf() {
+    local id="$1" uri
+    uri="$(catalog_field "${id}" hf)"
+    if model_is_local "${uri#hf://}"; then
+        log "Already local: ${uri}"
+        return 0
+    fi
+    log "Pulling ${uri} from Hugging Face"
+    ramalama_cmd pull "${uri}"
+}
+
+pull_file() {
+    local path="$1" name
+    name="$(basename "${path}")"
+    if model_is_local "${name}"; then
+        log "Already local: ${name}"
+        rm -f "${path}"
+        return 0
+    fi
+    log "Importing ${path} into the RamaLama store"
+    ramalama_cmd pull "file://${path}"
+    rm -f "${path}"
+}
+
+pull_nas_path() {
+    local relpath="$1" dest size
+    if model_is_local "$(basename "${relpath}")"; then
+        log "Already local: $(basename "${relpath}")"
+        return 0
+    fi
+    size="$(nas_file_size "${relpath}")" || die "Not found on the NAS: ${relpath}"
+    require_free_bytes $((size + SAFETY_BYTES))
+    dest="${INCOMING_DIR}/$(basename "${relpath}")"
+    if [[ -f "${dest}" ]] && [[ "$(stat -c %s "${dest}")" == "${size}" ]]; then
+        log "Reusing complete staging copy: ${dest}"
+    else
+        copy_from_nas "${relpath}" "${dest}"
+        [[ "$(stat -c %s "${dest}")" == "${size}" ]] || die "${dest} size does not match the NAS object (${size} bytes)."
+    fi
+    pull_file "${dest}"
+}
+
+pull_nas_catalog() {
+    local id="$1" nas_path
+    nas_path="$(catalog_field "${id}" nas)"
+    if [[ -z "${nas_path}" ]]; then
+        warn "$(catalog_field "${id}" label) is not on //${NAS_HOST}/${NAS_SHARE}."
+        return 2
+    fi
+    pull_nas_path "${nas_path}"
+}
+
+pull_one() {
+    local source="$1" id="$2"
+    case "${source}" in
+        hf)
+            pull_hf "${id}"
+            ;;
+        nas)
+            pull_nas_catalog "${id}"
+            ;;
+        auto)
+            if [[ -n "$(catalog_field "${id}" nas)" ]] && nas_file_size "$(catalog_field "${id}" nas)" >/dev/null 2>&1; then
+                log "$(catalog_field "${id}" label): using the NAS"
+                pull_nas_catalog "${id}"
+            else
+                log "$(catalog_field "${id}" label): using Hugging Face"
+                pull_hf "${id}"
+            fi
+            ;;
+        *)
+            die "Unknown source: ${source}"
+            ;;
+    esac
+}
+
+pull_many() {
+    local source="$1" id rc failures=0 skipped=0
+    shift
+    if [[ "${source}" == nas ]] && ! nas_available; then
+        die "The NAS at ${NAS_HOST} share ${NAS_SHARE} is not reachable as a public SMB guest. Set RAMALAMA_NAS_HOST/RAMALAMA_NAS_SHARE, or use Hugging Face."
+    fi
+    require_ramalama
+    if [[ $# -eq 8 && "${source}" != nas ]]; then
+        "${SCRIPT_DIR}/vimmite-ramalama-check-space" "${RAMALAMA_STORE}"
+    fi
+    for id in "$@"; do
+        rc=0
+        pull_one "${source}" "${id}" || rc=$?
+        if (( rc == 0 )); then
+            continue
+        fi
+        if [[ "${source}" == nas && "${rc}" -eq 2 ]]; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+        failures=$((failures + 1))
+    done
+    if (( skipped > 0 )); then
+        log "Skipped ${skipped} catalog model(s) that are not on the NAS. Use source 'auto' or 'hf' for those."
+    fi
+    (( failures == 0 )) || die "Finished with ${failures} failed pull(s)."
+    log "Requested pulls finished. Use: ujust ramalama list"
+}
+
+browse_nas_and_pull() {
+    nas_available || die "The NAS at ${NAS_HOST} share ${NAS_SHARE} is not reachable."
+    local publisher model file relpath choice
+    local -a publishers models files choices
+
+    mapfile -t publishers < <(nas_ls_dirs "")
+    (( ${#publishers[@]} > 0 )) || die "No directories found on //${NAS_HOST}/${NAS_SHARE}."
+    choices=()
+    for publisher in "${publishers[@]}"; do
+        choices+=("${publisher}")
+    done
+    choices+=("Back")
+    choice="$(choose "NAS folder on //${NAS_HOST}/${NAS_SHARE}" "${choices[@]}")" || return 0
+    [[ "${choice}" != "Back" ]] || return 0
+    publisher="${choice}"
+
+    mapfile -t models < <(nas_ls_dirs "${publisher}")
+    choices=()
+    if (( ${#models[@]} > 0 )); then
+        for model in "${models[@]}"; do
+            choices+=("${model}")
+        done
+    fi
+    mapfile -t files < <(nas_ls_ggufs "${publisher}")
+    for file in "${files[@]}"; do
+        choices+=("file:${file}")
+    done
+    (( ${#choices[@]} > 0 )) || die "Nothing to pull under ${publisher}."
+    choices+=("Back")
+    choice="$(choose "Model under ${publisher}" "${choices[@]}")" || return 0
+    [[ "${choice}" != "Back" ]] || return 0
+
+    if [[ "${choice}" == file:* ]]; then
+        relpath="${publisher}/${choice#file:}"
+        pull_nas_path "${relpath}"
+        return 0
+    fi
+    model="${choice}"
+
+    mapfile -t files < <(nas_ls_ggufs "${publisher}/${model}")
+    (( ${#files[@]} > 0 )) || die "No GGUF files under ${publisher}/${model}."
+    choices=()
+    for file in "${files[@]}"; do
+        [[ "${file}" == mmproj* || "${file}" == *mmproj* ]] && continue
+        choices+=("${file}")
+    done
+    for file in "${files[@]}"; do
+        [[ "${file}" == mmproj* || "${file}" == *mmproj* ]] || continue
+        choices+=("${file}")
+    done
+    choices+=("Back")
+    choice="$(choose "GGUF in ${publisher}/${model}" "${choices[@]}")" || return 0
+    [[ "${choice}" != "Back" ]] || return 0
+    relpath="${publisher}/${model}/${choice}"
+    pull_nas_path "${relpath}"
+}
+
+source_label() {
+    case "$1" in
+        hf) printf '%s\n' "Hugging Face" ;;
+        nas) printf '%s\n' "Local NAS (//${NAS_HOST}/${NAS_SHARE})" ;;
+        auto) printf '%s\n' "Automatic (NAS when the file exists, otherwise Hugging Face)" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+select_source() {
+    local choice
+    choice="$(choose "Where should models come from?" \
+        "1. $(source_label auto)" \
+        "2. $(source_label nas)" \
+        "3. $(source_label hf)" \
+        "4. Back")" || { printf '%s\n' "back"; return 0; }
+    case "${choice%%.*}" in
+        1) printf '%s\n' auto ;;
+        2) printf '%s\n' nas ;;
+        3) printf '%s\n' hf ;;
+        *) printf '%s\n' back ;;
+    esac
+}
+
+select_catalog_target() {
+    local source="$1" choice id extra
+    local -a choices=("1. All catalog models") ids
+    local i=2
+    mapfile -t ids < <(catalog_ids)
+    for id in "${ids[@]}"; do
+        extra=""
+        if [[ -z "$(catalog_field "${id}" nas)" ]]; then
+            extra=" (Hugging Face only)"
+        fi
+        choices+=("${i}. ${id} — $(catalog_field "${id}" label)${extra}")
+        i=$((i + 1))
+    done
+    if [[ "${source}" == nas || "${source}" == auto ]]; then
+        choices+=("${i}. Browse other GGUFs on the NAS")
+        i=$((i + 1))
+    fi
+    choices+=("${i}. Back")
+    choice="$(choose "Which model?" "${choices[@]}")" || { printf '%s\n' "back"; return 0; }
+    case "${choice}" in
+        "1."*) printf '%s\n' all ;;
+        *"Browse other"*) printf '%s\n' browse ;;
+        *"Back") printf '%s\n' back ;;
+        *)
+            # "N. id — label"
+            id="${choice#*. }"
+            id="${id%% — *}"
+            printf '%s\n' "${id}"
+            ;;
+    esac
+}
+
+pull_cmd() {
+    local source="" target=""
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            hf|nas|auto)
+                source="$1"
+                shift
+                ;;
+        esac
+    fi
+    if [[ $# -gt 0 ]]; then
+        target="$1"
+        shift
+        [[ $# -eq 0 ]] || die "Unexpected extra arguments: $*"
+    fi
+
+    if [[ -z "${source}" ]]; then
+        if [[ -t 0 ]]; then
+            source="$(select_source)"
+            [[ "${source}" != back ]] || return 0
+        else
+            source="auto"
+        fi
+    fi
+    case "${source}" in
+        hf|nas|auto) ;;
+        *) die "Source must be hf, nas, or auto (got ${source})." ;;
+    esac
+
+    if [[ -z "${target}" ]]; then
+        if [[ -t 0 ]]; then
+            target="$(select_catalog_target "${source}")"
+            [[ "${target}" != back ]] || return 0
+        else
+            die "Specify a model id, 'all', or run from a terminal for the menu."
+        fi
+    fi
+
+    case "${target}" in
+        all|browse) ;;
+        *)
+            is_catalog_id "${target}" || die "Unknown model '${target}'. Catalog: $(catalog_ids | tr '\n' ' ')"
+            ;;
+    esac
+    require_ramalama
+    case "${target}" in
+        all)
+            local -a ids
+            mapfile -t ids < <(catalog_ids)
+            pull_many "${source}" "${ids[@]}"
+            ;;
+        browse)
+            browse_nas_and_pull
+            ;;
+        *)
+            pull_many "${source}" "${target}"
+            ;;
+    esac
+}
+
+resolve_run_ref() {
+    local id="$1" uri name json match
+    uri="$(catalog_field "${id}" hf)"
+    json="$(ramalama_cmd list --json 2>/dev/null || printf '%s\n' '[]')"
+    match="$(jq -r --arg uri "${uri}" --arg uri2 "${uri#hf://}" '
+        map(.name) | map(select((. | ascii_downcase) as $n |
+            ($n | contains($uri | ascii_downcase)) or
+            ($n | contains($uri2 | ascii_downcase)))) | .[0] // empty
+    ' <<<"${json}")"
+    if [[ -n "${match}" ]]; then
+        printf '%s\n' "${match}"
+        return 0
+    fi
+    name="$(basename "$(catalog_field "${id}" nas)")"
+    if [[ -n "${name}" ]]; then
+        match="$(jq -r --arg name "${name}" 'map(.name) | map(select(. | ascii_downcase | contains($name | ascii_downcase))) | .[0] // empty' <<<"${json}")"
+        if [[ -n "${match}" ]]; then
+            printf '%s\n' "${match}"
+            return 0
+        fi
+    fi
+    printf '%s\n' "${uri}"
+}
+
+run_cmd() {
+    local model=""
+    if [[ $# -gt 0 ]] && { is_catalog_id "$1" || [[ "$1" == *://* || "$1" == *.gguf ]]; }; then
+        model="$1"
+        shift
+    elif [[ $# -eq 0 && -t 0 ]]; then
+        local choice id
+        local -a choices=() ids
+        local i=1
+        mapfile -t ids < <(catalog_ids)
+        for id in "${ids[@]}"; do
+            choices+=("${i}. ${id} — $(catalog_field "${id}" label)")
+            i=$((i + 1))
+        done
+        choices+=("${i}. Choose from local store")
+        i=$((i + 1))
+        choices+=("${i}. Back")
+        choice="$(choose "Run which model?" "${choices[@]}")" || return 0
+        case "${choice}" in
+            *"Choose from local store")
+                local -a names
+                mapfile -t names < <(ramalama_cmd list --json | jq -r '.[].name')
+                (( ${#names[@]} > 0 )) || die "No local models. Pull one first with: ujust ramalama pull"
+                names+=("Back")
+                choice="$(choose "Local RamaLama models" "${names[@]}")" || return 0
+                [[ "${choice}" != "Back" ]] || return 0
+                model="${choice}"
+                ;;
+            *"Back") return 0 ;;
+            *)
+                model="${choice#*. }"
+                model="${model%% — *}"
+                ;;
+        esac
+    elif [[ $# -gt 0 ]]; then
+        model="$1"
+        shift
+    else
+        die "Specify a catalog id or model URI, or run from a terminal for the menu."
+    fi
+
+    if is_catalog_id "${model}"; then
+        model="$(resolve_run_ref "${model}")"
+    fi
+    ramalama_cmd run --backend "${RAMALAMA_BACKEND}" --ngl "${RAMALAMA_NGL}" --runtime-args="-c ${RAMALAMA_CONTEXT}" "${model}" "$@"
+}
+
+show_help() {
+    cat <<EOF
+RamaLama manager for Vimmite. Setup installs the CLI; pull/run use menus.
+
+Usage:
+  ujust ramalama
+  ujust ramalama setup
+  ujust ramalama pull [hf|nas|auto] [all|MODEL]
+  ujust ramalama run [MODEL] [prompt...]
+  ujust ramalama list
+  ujust ramalama smoke
+  ujust ramalama preflight
+  ujust ramalama help
+
+Catalog models: $(catalog_ids | tr '\n' ' ')
+
+Pull sources:
+  auto  Use the public NAS when the GGUF is there, otherwise Hugging Face
+  nas   Copy from SMB //${NAS_HOST}/${NAS_SHARE} (guest/public by default)
+  hf    Download from Hugging Face
+
+NAS defaults (override with environment variables):
+  RAMALAMA_NAS_HOST=${NAS_HOST}
+  RAMALAMA_NAS_SHARE=${NAS_SHARE}
+  RAMALAMA_NAS_USER=${NAS_USER}
+  RAMALAMA_NAS_PASS (empty; the share is treated as public)
+
+On this NAS the catalog maps to:
+  qwen, ornith, gemma, granite
+Laguna XS, Nemotron 3.5 Lightning, Liquid LFM2.5 8B, and North Mini Code are
+not on the share; pull those from Hugging Face or browse other NAS GGUFs.
+
+Store: ${RAMALAMA_STORE}
+CLI:   ${RAMALAMA_BIN}
+EOF
+}
+
+menu() {
+    local -a choices=(
+        '1. Setup (install or update the CLI, no model download)'
+        '2. Pull models'
+        '3. List local models'
+        '4. Run a model'
+        '5. Vulkan smoke test'
+        '6. Check prerequisites'
+        '7. Show help'
+        '8. Exit'
+    )
+    local selection number
+    while true; do
+        if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+            selection="$(ugum choose "${choices[@]}")" || return 0
+            number="${selection%%.*}"
+        else
+            printf '\nRamaLama\n\n'
+            printf '  %s\n' "${choices[@]}"
+            read -r -p "Selection: " number
+        fi
+        case "${number}" in
+            1) setup_cmd ;;
+            2) pull_cmd ;;
+            3) list_cmd ;;
+            4) run_cmd ;;
+            5) smoke_cmd ;;
+            6) preflight_cmd ;;
+            7) show_help ;;
+            8) return 0 ;;
+            *) warn "Choose a number from 1 through 8." ;;
+        esac
+        pause_menu
+    done
+}
+
+usage() {
+    cat <<'EOF'
+Usage: vimmite-ramalama [menu|setup|install|preflight|pull|run|list|smoke|help] ...
+EOF
+}
+
+main() {
+    local action="${1:-menu}"
+    if [[ $# -gt 0 ]]; then
+        shift
+    fi
+    case "${action}" in
+        menu) menu ;;
+        setup|install) setup_cmd ;;
+        preflight) preflight_cmd ;;
+        pull) pull_cmd "$@" ;;
+        run) run_cmd "$@" ;;
+        list) list_cmd ;;
+        smoke) smoke_cmd ;;
+        help|-h|--help) show_help ;;
+        *) usage >&2; exit 2 ;;
+    esac
+}
+
+main "$@"

@@ -150,12 +150,12 @@ ai_menu() {
     echo "Model storage: ${MODEL_STORE}"
     echo "Undo: use the Strix Halo manager's Remove action. RamaLama can be removed by deleting ~/.local/share/ramalama-cli; models remain in the store."
     choice="$(choose "AI backend and model storage" \
-        "Install RamaLama Vulkan backend (no model download)" \
+        "Open RamaLama manager" \
         "Open Strix Halo Vulkan/ROCm manager" \
         "Create model storage directory" \
         "Back")" || return 0
     case "${choice}" in
-        "Install RamaLama"*) run_ujust ramalama-setup ;;
+        "Open RamaLama"*) run_ujust ramalama ;;
         "Open Strix Halo"*) run_ujust strix-halo-ai ;;
         "Create model storage directory")
             mkdir -p "${MODEL_STORE}"

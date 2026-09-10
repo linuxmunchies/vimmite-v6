@@ -13,7 +13,7 @@ available_kib="$(df -Pk "${probe}" | awk 'NR == 2 { print $4 }')"
 minimum_kib=$((145 * 1024 * 1024))
 if (( available_kib < minimum_kib )); then
     available_gib=$((available_kib / 1024 / 1024))
-    echo "Need at least 145 GiB free for ramalama-pull-all; only ${available_gib} GiB is free." >&2
-    echo "Set RAMALAMA_STORE to a larger filesystem, or pull individual models." >&2
+    echo "Need at least 145 GiB free for ujust ramalama pull hf all; only ${available_gib} GiB is free." >&2
+    echo "Set RAMALAMA_STORE to a larger filesystem, or pull individual models with: ujust ramalama pull" >&2
     exit 1
 fi

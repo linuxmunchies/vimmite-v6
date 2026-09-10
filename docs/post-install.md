@@ -81,23 +81,39 @@ image. See the [complete development-box guide](development.md).
 ## RamaLama
 
 ```bash
-ujust ramalama-setup
-# or, to install the CLI and download every selected model:
-ujust ramalama-setup-all
+ujust ramalama
 ```
 
-Both options first check rootless Podman, Python, `jq`, and the AMD Vulkan
-environment. `ramalama-setup` creates a user-local virtual environment in
-`~/.local/share/ramalama-cli`, exposes `ramalama` through `~/.local/bin`, and
-does not download weights. `ramalama-setup-all` also pulls the selected GGUF
-models, which requires at least 145 GiB free in the model store (by default
-`~/ai/models`). Set `RAMALAMA_STORE=/path/on/a/large/disk` before
-running either command to relocate that store.
+Setup, pulling, listing, and running share this one command. The menu installs
+the CLI, pulls catalog models, lists the local store, and starts a Vulkan run.
+Install and setup are the same action: a user-local virtual environment in
+`~/.local/share/ramalama-cli`, with `ramalama` on `~/.local/bin`. Setup does
+not download weights.
 
-Use an individual `ramalama-pull-*` recipe to download a model later. Run
-`ujust ramalama-list` to inspect local models and `ujust ramalama-smoke` after
-the Liquid model is present. `ujust --choose` groups the install, pull, and run
-helpers under RamaLama.
+Pulls can come from Hugging Face or from the public SMB share `//10.1.1.5/ai`
+(Unraid `/mnt/user/ai`, guest access). Automatic mode copies a catalog GGUF
+from the NAS when it is present and otherwise uses Hugging Face. Qwen 3.5
+35B-A3B, Ornith 1.5 9B, Gemma 4 26B-A4B, and Granite 4.2 8B currently live on
+that share; the remaining catalog models still come from Hugging Face unless
+you browse other GGUFs on the NAS. Override the share with `RAMALAMA_NAS_HOST`,
+`RAMALAMA_NAS_SHARE`, `RAMALAMA_NAS_USER`, and `RAMALAMA_NAS_PASS`.
+
+```bash
+ujust ramalama setup
+ujust ramalama pull              # source and model menus
+ujust ramalama pull auto all     # NAS when the file exists, otherwise Hugging Face
+ujust ramalama pull nas qwen
+ujust ramalama pull hf liquid
+ujust ramalama run qwen
+ujust ramalama list
+ujust ramalama smoke
+```
+
+Pulling every catalog model from Hugging Face needs at least 145 GiB free in
+the model store (by default `~/ai/models`). Set
+`RAMALAMA_STORE=/path/on/a/large/disk` to relocate that store. `ujust ramalama
+smoke` needs the Liquid model already local. Previous `ramalama-setup` and
+`ramalama-pull-*` names still work as hidden aliases.
 
 ## Strix Halo local AI
 

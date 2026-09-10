@@ -168,6 +168,9 @@ rebase.
       same-LAN test and can be disabled again.
 - [ ] LACT connects to `lactd`; input-remapper lists devices and answers its
       control handshake; both services survive reboot.
+- [ ] `ujust ramalama` opens the combined setup/pull/run menu. Pulling from
+      Hugging Face and from the public `//10.1.1.5/ai` SMB share both work;
+      `setup` does not download weights.
 
 ## Evidence to collect on failure
 

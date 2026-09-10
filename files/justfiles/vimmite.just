@@ -164,150 +164,103 @@ wake-on-lan interface="" action="status":
 setup-ai-max action="status":
     /usr/libexec/vimmite-setup-ai-max "$@"
 
-# RamaLama is installed per user so it works on the immutable image without
-# layering packages or changing the host configuration.
-ramalama_store := env_var_or_default("RAMALAMA_STORE", env_var("HOME") + "/ai/models")
-ramalama_cli_dir := env_var_or_default("RAMALAMA_CLI_DIR", env_var("HOME") + "/.local/share/ramalama-cli")
-ramalama_bin := env_var_or_default("RAMALAMA_BIN", ramalama_cli_dir + "/bin/ramalama")
-ramalama_user_bin_dir := env_var_or_default("RAMALAMA_USER_BIN_DIR", env_var("HOME") + "/.local/bin")
-ramalama_backend := env_var_or_default("RAMALAMA_BACKEND", "vulkan")
-ramalama_ngl := env_var_or_default("RAMALAMA_NGL", "auto")
-ramalama_context_tokens := env_var_or_default("RAMALAMA_CONTEXT", "4096")
-
-# Each Hugging Face transport selects exactly one GGUF quantization.
-ramalama_qwen := "hf://unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL"
-ramalama_ornith := "hf://ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M"
-ramalama_gemma := "hf://unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL"
-ramalama_laguna := "hf://ggml-org/Laguna-XS-2.1-GGUF:Q4_K_M"
-ramalama_granite := "hf://bartowski/granite-4.2-8b-GGUF:Q4_K_M"
-ramalama_nemotron := "hf://unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF:UD-Q4_K_XL"
-ramalama_liquid := "hf://LiquidAI/LFM2.5-8B-A1B-GGUF:Q4_K_M"
-ramalama_north := "hf://unsloth/North-Mini-Code-1.0-GGUF:UD-Q4_K_M"
-
-[private]
-_ramalama-require:
-    #!/usr/bin/env bash
-    if [[ ! -x "{{ ramalama_bin }}" ]]; then
-        echo "RamaLama is not installed in {{ ramalama_cli_dir }}." >&2
-        echo "Run: ujust ramalama-setup" >&2
-        exit 1
-    fi
-
-[private]
-_ramalama-check-all-space:
-    /usr/libexec/vimmite-ramalama-check-space "{{ ramalama_store }}"
-
-[doc('Check the non-destructive prerequisites for AMD Vulkan inference')]
+# RamaLama is installed per user. The public command is `ujust ramalama`;
+# older recipe names remain as private aliases so existing scripts keep working.
+[doc('Manage RamaLama: setup, pull from Hugging Face or the NAS, list, and run')]
 [group('RamaLama')]
+ramalama *args:
+    /usr/libexec/vimmite-ramalama "$@"
+
+[private]
 ramalama-preflight:
-    /usr/libexec/vimmite-ramalama-preflight "{{ ramalama_store }}" "{{ ramalama_backend }}" "{{ ramalama_ngl }}" "{{ ramalama_context_tokens }}"
+    /usr/libexec/vimmite-ramalama preflight
 
-[doc('Install/update RamaLama and Hugging Face CLI without downloading models')]
-[group('RamaLama')]
+[private]
 ramalama-install:
-    /usr/libexec/vimmite-ramalama-install "{{ ramalama_cli_dir }}" "{{ ramalama_user_bin_dir }}" "{{ ramalama_bin }}" "{{ ramalama_store }}"
+    /usr/libexec/vimmite-ramalama setup
 
-[doc('Set up RamaLama only: install the CLI and do not download any model')]
-[group('RamaLama')]
-ramalama-setup: ramalama-preflight ramalama-install
-    @echo "RamaLama is ready without models. Run an individual ramalama-pull-* recipe when wanted."
+[private]
+ramalama-setup:
+    /usr/libexec/vimmite-ramalama setup
 
-[doc('List models already present in the configured RamaLama model store')]
-[group('RamaLama')]
-ramalama-list: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" list
+[private]
+ramalama-list:
+    /usr/libexec/vimmite-ramalama list
 
-[doc('Download Qwen3.5 35B-A3B, Unsloth Dynamic Q4_K_XL')]
-[group('RamaLama pulls')]
-ramalama-pull-qwen: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_qwen }}"
+[private]
+ramalama-pull-qwen:
+    /usr/libexec/vimmite-ramalama pull hf qwen
 
-[doc('Download Ornith 1.5 9B, Q4_K_M')]
-[group('RamaLama pulls')]
-ramalama-pull-ornith: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_ornith }}"
+[private]
+ramalama-pull-ornith:
+    /usr/libexec/vimmite-ramalama pull hf ornith
 
-[doc('Download Gemma 4 26B-A4B, Unsloth Dynamic Q4_K_XL')]
-[group('RamaLama pulls')]
-ramalama-pull-gemma: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_gemma }}"
+[private]
+ramalama-pull-gemma:
+    /usr/libexec/vimmite-ramalama pull hf gemma
 
-[doc('Download Laguna XS 2.1, Q4_K_M')]
-[group('RamaLama pulls')]
-ramalama-pull-laguna: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_laguna }}"
+[private]
+ramalama-pull-laguna:
+    /usr/libexec/vimmite-ramalama pull hf laguna
 
-[doc('Download Granite 4.2 8B, Q4_K_M')]
-[group('RamaLama pulls')]
-ramalama-pull-granite: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_granite }}"
+[private]
+ramalama-pull-granite:
+    /usr/libexec/vimmite-ramalama pull hf granite
 
-[doc('Download NVIDIA Nemotron 3.5 Lightning 30B-A3B, Unsloth Dynamic Q4_K_XL')]
-[group('RamaLama pulls')]
-ramalama-pull-nemotron: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_nemotron }}"
+[private]
+ramalama-pull-nemotron:
+    /usr/libexec/vimmite-ramalama pull hf nemotron
 
-[doc('Download Liquid LFM2.5 8B-A1B, Q4_K_M')]
-[group('RamaLama pulls')]
-ramalama-pull-liquid: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_liquid }}"
+[private]
+ramalama-pull-liquid:
+    /usr/libexec/vimmite-ramalama pull hf liquid
 
-[doc('Download Cohere North Mini Code 1.0, Unsloth Dynamic Q4_K_M')]
-[group('RamaLama pulls')]
-ramalama-pull-north: _ramalama-require
-    "{{ ramalama_bin }}" --store "{{ ramalama_store }}" pull "{{ ramalama_north }}"
+[private]
+ramalama-pull-north:
+    /usr/libexec/vimmite-ramalama pull hf north
 
-[doc('Download every requested model after confirming a 145 GiB free-space safety margin')]
-[group('RamaLama pulls')]
-ramalama-pull-all: _ramalama-check-all-space ramalama-pull-qwen ramalama-pull-ornith ramalama-pull-gemma ramalama-pull-laguna ramalama-pull-granite ramalama-pull-nemotron ramalama-pull-liquid ramalama-pull-north
-    @echo "All requested pulls finished. Use ramalama-list to review the local store."
+[private]
+ramalama-pull-all:
+    /usr/libexec/vimmite-ramalama pull hf all
 
-[doc('Set up RamaLama and download every requested model (at least 145 GiB free)')]
-[group('RamaLama')]
-ramalama-setup-all: ramalama-preflight ramalama-install ramalama-pull-all
-    @echo "RamaLama and all requested models are ready. Run ramalama-smoke next."
+[private]
+ramalama-setup-all:
+    #!/usr/bin/env bash
+    /usr/libexec/vimmite-ramalama setup
+    /usr/libexec/vimmite-ramalama pull hf all
 
-[doc('Run a short real Vulkan smoke test after confirming the Liquid model is already local')]
-[group('RamaLama')]
-ramalama-smoke: _ramalama-require
-    /usr/libexec/vimmite-ramalama-smoke "{{ ramalama_bin }}" "{{ ramalama_store }}" "{{ ramalama_backend }}" "{{ ramalama_ngl }}" "{{ ramalama_liquid }}"
+[private]
+ramalama-smoke:
+    /usr/libexec/vimmite-ramalama smoke
 
-[doc('Run Qwen3.5 35B-A3B on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-qwen *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_qwen }}" "$@"
+[private]
+ramalama-run-qwen *prompt:
+    /usr/libexec/vimmite-ramalama run qwen "$@"
 
-[doc('Run Ornith 1.5 on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-ornith *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_ornith }}" "$@"
+[private]
+ramalama-run-ornith *prompt:
+    /usr/libexec/vimmite-ramalama run ornith "$@"
 
-[doc('Run Gemma 4 26B-A4B on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-gemma *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_gemma }}" "$@"
+[private]
+ramalama-run-gemma *prompt:
+    /usr/libexec/vimmite-ramalama run gemma "$@"
 
-[doc('Run Laguna XS 2.1 on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-laguna *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_laguna }}" "$@"
+[private]
+ramalama-run-laguna *prompt:
+    /usr/libexec/vimmite-ramalama run laguna "$@"
 
-[doc('Run Granite 4.2 8B on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-granite *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_granite }}" "$@"
+[private]
+ramalama-run-granite *prompt:
+    /usr/libexec/vimmite-ramalama run granite "$@"
 
-[doc('Run Nemotron 3.5 Lightning on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-nemotron *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_nemotron }}" "$@"
+[private]
+ramalama-run-nemotron *prompt:
+    /usr/libexec/vimmite-ramalama run nemotron "$@"
 
-[doc('Run Liquid LFM2.5 8B-A1B on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-liquid *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_liquid }}" "$@"
+[private]
+ramalama-run-liquid *prompt:
+    /usr/libexec/vimmite-ramalama run liquid "$@"
 
-[doc('Run Cohere North Mini Code 1.0 on Vulkan; an optional prompt follows the recipe name')]
-[group('RamaLama runs')]
-ramalama-run-north *prompt: _ramalama-require
-    RAMALAMA_CONTAINER_ENGINE=podman "{{ ramalama_bin }}" --store "{{ ramalama_store }}" run --backend "{{ ramalama_backend }}" --ngl "{{ ramalama_ngl }}" --runtime-args="-c {{ ramalama_context_tokens }}" "{{ ramalama_north }}" "$@"
+[private]
+ramalama-run-north *prompt:
+    /usr/libexec/vimmite-ramalama run north "$@"
