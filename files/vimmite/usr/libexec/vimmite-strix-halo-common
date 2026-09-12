@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+# Shared host checks for Vimmite's rootless Strix Halo AI containers.
+# This file is sourced by the llama.cpp and ComfyUI managers.
+
+log() {
+    printf '%s\n' "$*"
+}
+
+warn() {
+    printf 'WARNING: %s\n' "$*" >&2
+}
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+have_container() {
+    podman container exists "$1" >/dev/null 2>&1
+}
+
+container_running() {
+    [[ "$(podman inspect --format '{{.State.Running}}' "$1" 2>/dev/null || true)" == "true" ]]
+}
+
+container_exec() {
+    local container="$1"
+    shift
+    distrobox enter --name "${container}" --no-tty -- "$@"
+}
+
+require_commands() {
+    local missing=0 command rootless
+    for command in distrobox podman; do
+        if ! command -v "${command}" >/dev/null 2>&1; then
+            printf 'ERROR: %s is required but is not installed in the image.\n' "${command}" >&2
+            missing=1
+        fi
+    done
+    (( missing == 0 )) || die "Install the missing dependency through the BlueBuild image, not rpm-ostree layering."
+    (( EUID != 0 )) || die "Run Strix Halo AI as your normal user, not with sudo."
+    rootless="$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)"
+    [[ "${rootless}" == "true" ]] || die "Podman is not reporting a usable rootless session for $(id -un)."
+}
+
+strix_halo_pci_nodes() {
+    local device
+    for device in /sys/bus/pci/devices/*; do
+        [[ -r "${device}/vendor" && -r "${device}/device" ]] || continue
+        if [[ "$(<"${device}/vendor")" == "0x1002" && "$(<"${device}/device")" == "0x1586" ]]; then
+            printf '%s\n' "${device}"
+        fi
+    done
+}
+
+is_strix_halo() {
+    local pci_matches cpu_model node driver
+    pci_matches="$(strix_halo_pci_nodes)"
+    cpu_model="$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -n1)"
+
+    # 1002:1586 is the Strix Halo display controller ID. Require the amdgpu
+    # driver when sysfs exposes it, and retain the CPU name as a second signal.
+    if [[ -n "${pci_matches}" ]]; then
+        while IFS= read -r node; do
+            driver="$(basename "$(readlink -f "${node}/driver" 2>/dev/null || true)")"
+            if [[ "${driver}" == "amdgpu" && "${cpu_model}" == *"RYZEN AI MAX"* ]]; then
+                return 0
+            fi
+        done <<<"${pci_matches}"
+    fi
+    return 1
+}
+
+require_strix_halo() {
+    if is_strix_halo; then
+        return 0
+    fi
+    if [[ "${STRIX_HALO_AI_ALLOW_UNSUPPORTED:-0}" == "1" ]]; then
+        warn "Unsupported-hardware override is active (STRIX_HALO_AI_ALLOW_UNSUPPORTED=1)."
+        return 0
+    fi
+    die "No Strix Halo APU was recognized. This path requires AMD PCI ID 1002:1586, amdgpu, and a Ryzen AI MAX CPU. Use the RamaLama setup for other AMD GPUs. For development diagnostics only, set STRIX_HALO_AI_ALLOW_UNSUPPORTED=1."
+}
+
+user_has_group() {
+    local group_name="$1" group_gid
+    group_gid="$(getent group "${group_name}" | cut -d: -f3)"
+    [[ -n "${group_gid}" ]] || return 1
+    id -G | tr ' ' '\n' | grep -Fxq "${group_gid}"
+}
+
+readable_render_node() {
+    local node
+    for node in /dev/dri/renderD*; do
+        [[ -e "${node}" ]] || continue
+        [[ -r "${node}" && -w "${node}" ]] && return 0
+    done
+    return 1
+}
+
+require_device_access() {
+    local backend="$1"
+    [[ -d /dev/dri ]] || die "/dev/dri is absent; the AMD DRM driver is not exposing GPU devices."
+    readable_render_node || die "No /dev/dri/renderD* node is readable and writable by $(id -un). Add the user to render/video through the host's declarative configuration, then log out and back in. Do not use a world-writable udev workaround."
+    if [[ "${backend}" == "rocm" ]]; then
+        [[ -e /dev/kfd ]] || die "/dev/kfd is absent; ROCm compute cannot be exposed to the container."
+        [[ -r /dev/kfd && -w /dev/kfd ]] || die "/dev/kfd is not readable and writable by $(id -un). Add the user to render through the host's declarative configuration, then log out and back in."
+    fi
+}

@@ -17,6 +17,9 @@ readonly ROUTER_PRESETS_SOURCE="${SCRIPT_DIR}/vimmite-strix-halo-router-presets.
 readonly ROUTER_PRESETS="${USER_DATA_DIR}/router-presets.ini"
 readonly HF_ENV="/opt/vimmite-strix-halo-hf"
 readonly HF_CLI="${HF_ENV}/bin/hf"
+readonly COMFYUI_MANAGER="${SCRIPT_DIR}/vimmite-strix-halo-comfyui"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/vimmite-strix-halo-common"
 
 readonly -a WRAPPERS=(
     llama-vulkan
@@ -26,23 +29,6 @@ readonly -a WRAPPERS=(
     strix-vulkan-shell
     strix-rocm-shell
 )
-
-log() {
-    printf '%s\n' "$*"
-}
-
-warn() {
-    printf 'WARNING: %s\n' "$*" >&2
-}
-
-die() {
-    printf 'ERROR: %s\n' "$*" >&2
-    exit 1
-}
-
-have_container() {
-    podman container exists "$1" >/dev/null 2>&1
-}
 
 backend_container() {
     case "$1" in
@@ -70,83 +56,6 @@ backend_flags() {
             ;;
         *) die "Unknown backend: $1" ;;
     esac
-}
-
-require_commands() {
-    local missing=0 command
-    for command in distrobox podman; do
-        if ! command -v "${command}" >/dev/null 2>&1; then
-            printf 'ERROR: %s is required but is not installed in the image.\n' "${command}" >&2
-            missing=1
-        fi
-    done
-    (( missing == 0 )) || die "Install the missing dependency through the BlueBuild image, not rpm-ostree layering."
-}
-
-strix_halo_pci_nodes() {
-    local device
-    for device in /sys/bus/pci/devices/*; do
-        [[ -r "${device}/vendor" && -r "${device}/device" ]] || continue
-        if [[ "$(<"${device}/vendor")" == "0x1002" && "$(<"${device}/device")" == "0x1586" ]]; then
-            printf '%s\n' "${device}"
-        fi
-    done
-}
-
-is_strix_halo() {
-    local pci_matches cpu_model
-    pci_matches="$(strix_halo_pci_nodes)"
-    cpu_model="$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -n1)"
-
-    # 1002:1586 is the Strix Halo display controller ID. Require the amdgpu
-    # driver when sysfs exposes it, and retain the CPU name as a second signal.
-    if [[ -n "${pci_matches}" ]]; then
-        local node driver
-        while IFS= read -r node; do
-            driver="$(basename "$(readlink -f "${node}/driver" 2>/dev/null || true)")"
-            if [[ "${driver}" == "amdgpu" && "${cpu_model}" == *"RYZEN AI MAX"* ]]; then
-                return 0
-            fi
-        done <<<"${pci_matches}"
-    fi
-    return 1
-}
-
-require_strix_halo() {
-    if is_strix_halo; then
-        return 0
-    fi
-    if [[ "${STRIX_HALO_AI_ALLOW_UNSUPPORTED:-0}" == "1" ]]; then
-        warn "Unsupported-hardware override is active (STRIX_HALO_AI_ALLOW_UNSUPPORTED=1)."
-        return 0
-    fi
-    die "No Strix Halo APU was recognized. This path requires AMD PCI ID 1002:1586, amdgpu, and a Ryzen AI MAX CPU. Use the RamaLama setup for other AMD GPUs. For development diagnostics only, set STRIX_HALO_AI_ALLOW_UNSUPPORTED=1."
-}
-
-user_has_group() {
-    local group_name="$1" group_gid
-    group_gid="$(getent group "${group_name}" | cut -d: -f3)"
-    [[ -n "${group_gid}" ]] || return 1
-    id -G | tr ' ' '\n' | grep -Fxq "${group_gid}"
-}
-
-readable_render_node() {
-    local node
-    for node in /dev/dri/renderD*; do
-        [[ -e "${node}" ]] || continue
-        [[ -r "${node}" && -w "${node}" ]] && return 0
-    done
-    return 1
-}
-
-require_device_access() {
-    local backend="$1"
-    [[ -d /dev/dri ]] || die "/dev/dri is absent; the AMD DRM driver is not exposing GPU devices."
-    readable_render_node || die "No /dev/dri/renderD* node is readable and writable by $(id -un). Add the user to render/video through the host's declarative configuration, then log out and back in. Do not use a world-writable udev workaround."
-    if [[ "${backend}" == "rocm" ]]; then
-        [[ -e /dev/kfd ]] || die "/dev/kfd is absent; ROCm compute cannot be exposed to the container."
-        [[ -r /dev/kfd && -w /dev/kfd ]] || die "/dev/kfd is not readable and writable by $(id -un). Add the user to render through the host's declarative configuration, then log out and back in."
-    fi
 }
 
 install_wrappers() {
@@ -188,12 +97,6 @@ remove_backend_wrappers() {
             rm -f -- "${USER_BIN_DIR}/${wrapper}"
         fi
     done
-}
-
-container_exec() {
-    local container="$1"
-    shift
-    distrobox enter --name "${container}" --no-tty -- "$@"
 }
 
 verify_backend() {
@@ -552,7 +455,7 @@ verify_installation() {
 
 show_help() {
     cat <<EOF
-Strix Halo AI uses stable kyuz0 llama.cpp Distroboxes for gfx1151 only.
+Strix Halo AI uses kyuz0's llama.cpp and ComfyUI Distroboxes for gfx1151 only.
 
 Stable backends:
   Vulkan  ${VULKAN_IMAGE}  (${VULKAN_CONTAINER})
@@ -565,6 +468,7 @@ Defaults: --load-mode none -ngl 999 -fa 1
 Server: http://127.0.0.1:8080/v1 (unless --host/--port are supplied)
 Stop router: ujust strix-halo-ai -- stop [vulkan|rocm|both]
 Llama version: ujust strix-halo-ai -- version [vulkan|rocm|both]
+ComfyUI: ujust strix-halo-comfyui
 
 The containers share the host HOME, so toolbox update/removal never removes
 models. Rootless Podman receives host supplementary groups with
@@ -618,7 +522,9 @@ menu() {
         '12. Stop running router(s)'
         '13. Check installed llama version(s)'
         '14. Show configuration/help'
-        '15. Exit'
+        '15. Install AI coding tools'
+        '16. Manage ComfyUI image generation'
+        '17. Exit'
     )
     local selection number
     while true; do
@@ -647,8 +553,13 @@ menu() {
             12) run_both stop_router ;;
             13) run_both show_llama_version ;;
             14) show_help ;;
-            15) return 0 ;;
-            *) warn "Choose a number from 1 through 15." ;;
+            15) /usr/libexec/vimmite-install-ai-cli ;;
+            16)
+                [[ -x "${COMFYUI_MANAGER}" ]] || die "ComfyUI manager is missing or not executable: ${COMFYUI_MANAGER}"
+                "${COMFYUI_MANAGER}"
+                ;;
+            17) return 0 ;;
+            *) warn "Choose a number from 1 through 17." ;;
         esac
         pause_menu
     done

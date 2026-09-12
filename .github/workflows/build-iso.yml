@@ -1,0 +1,72 @@
+name: Build installer ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published image tag to install
+        required: true
+        default: latest
+      fedora_version:
+        description: Fedora installer version (must match the image)
+        required: true
+        default: "44"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  iso:
+    name: Build Vimmite V6 ISO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_NAME: vimmite-v6-kinoite
+      IMAGE_REPO: ghcr.io/linuxmunchies
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Build ISO
+        id: build
+        uses: jasonn3/build-container-installer@v1.4.0
+        with:
+          arch: x86_64
+          image_name: ${{ env.IMAGE_NAME }}
+          image_repo: ${{ env.IMAGE_REPO }}
+          image_tag: ${{ github.event.inputs.image_tag }}
+          image_signed: "true"
+          version: ${{ github.event.inputs.fedora_version }}
+          variant: Kinoite
+          iso_name: vimmite-v6-kinoite.iso
+          secure_boot_key_url: https://github.com/ublue-os/bazzite/raw/main/secure_boot.der
+          enrollment_password: universalblue
+          enable_cache_dnf: "true"
+          enable_cache_skopeo: "false"
+          enable_flatpak_dependencies: "false"
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: vimmite-v6-kinoite-iso
+          path: |
+            vimmite-v6-kinoite.iso
+            vimmite-v6-kinoite.iso-CHECKSUM
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

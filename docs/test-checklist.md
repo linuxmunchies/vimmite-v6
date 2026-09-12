@@ -100,7 +100,8 @@ rebase.
 
 ## Strix Halo local AI
 
-- [ ] `ujust strix-halo-ai` opens the 15-choice `ugum` menu.
+- [ ] `ujust strix-halo-ai` opens the `ugum` menu and its ComfyUI entry
+      opens the nested image-generation manager.
 - [ ] Unsupported AMD hardware is refused unless the documented diagnostic override is set.
 - [ ] Vulkan uses `vulkan-radv`, `/dev/dri`, `keep-groups`, and unconfined seccomp.
 - [ ] ROCm uses `rocm-10.0`, `/dev/dri`, `/dev/kfd`, `keep-groups`, and unconfined seccomp.
@@ -114,6 +115,30 @@ rebase.
 - [ ] Update/recreate and Remove leave the model sentinel and downloaded weights intact.
 - [ ] Reinstall after removal restores the backend and host wrappers cleanly.
 - [ ] No host ROCm/llama.cpp package, udev mode rule, kernel argument, or BIOS change is introduced.
+- [ ] Stable ComfyUI uses `:latest`; experimental uses `:dev`; both
+      containers can coexist and normal launch does not pull either tag.
+- [ ] Both ComfyUI containers receive `/dev/dri`, `/dev/kfd`, `keep-groups`,
+      and unconfined seccomp through rootless Podman.
+- [ ] Install/create reruns `/opt/set_extra_paths.sh`, finds the upstream
+      `start_comfy_ui` alias, and reports PyTorch GPU availability on gfx1151.
+- [ ] Stable and experimental ComfyUI launch at `http://127.0.0.1:8000`
+      without a LAN listen flag and use separate persistent user directories.
+- [ ] Both channels share sentinels in `~/comfy-models`, `~/comfy-inputs`, and
+      `~/comfy-outputs`; refresh and removal preserve them.
+- [ ] Saved workflows and settings survive refresh below
+      `~/comfy-user/<environment>`; newly named bundled workflows are seeded
+      without overwriting existing files.
+- [ ] The upstream Model Manager opens for each channel and no model is
+      downloaded during container creation or normal launch.
+- [ ] Diagnostics report the actual PyTorch/HIP/ROCm SDK values and ComfyUI
+      revision without claiming a fixed ROCm major version.
+- [ ] Refresh requires confirmation, pulls before deleting, recreates only the
+      selected channel, and warns that container-local packages/custom nodes
+      are discarded.
+- [ ] A forced recreation or GPU-check failure restores the selected ComfyUI
+      container from its prior image ID and leaves HOME data untouched.
+- [ ] ComfyUI integration adds no host ROCm, PyTorch, ComfyUI, SELinux, udev,
+      kernel, or service configuration.
 
 ## Graphics and gaming
 

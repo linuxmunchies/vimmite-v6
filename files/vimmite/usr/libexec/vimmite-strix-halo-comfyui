@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly STABLE_CONTAINER="strix-halo-comfyui-stable"
+readonly STABLE_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:latest"
+readonly EXPERIMENTAL_CONTAINER="strix-halo-comfyui-experimental"
+readonly EXPERIMENTAL_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:dev"
+readonly MODEL_DIR="${HOME}/comfy-models"
+readonly OUTPUT_DIR="${HOME}/comfy-outputs"
+readonly INPUT_DIR="${HOME}/comfy-inputs"
+readonly USER_ROOT="${HOME}/comfy-user"
+readonly IMAGE_REPOSITORY="docker.io/kyuz0/amd-strix-halo-comfyui"
+readonly COMFY_URL="http://127.0.0.1:8000"
+readonly CONTAINER_FLAGS='--device /dev/dri --device /dev/kfd --group-add keep-groups --security-opt seccomp=unconfined'
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/vimmite-strix-halo-common"
+
+environment_container() {
+    case "$1" in
+        stable) printf '%s\n' "${STABLE_CONTAINER}" ;;
+        experimental) printf '%s\n' "${EXPERIMENTAL_CONTAINER}" ;;
+        *) die "Unknown ComfyUI environment: $1" ;;
+    esac
+}
+
+environment_image() {
+    case "$1" in
+        stable) printf '%s\n' "${STABLE_IMAGE}" ;;
+        experimental) printf '%s\n' "${EXPERIMENTAL_IMAGE}" ;;
+        *) die "Unknown ComfyUI environment: $1" ;;
+    esac
+}
+
+environment_user_dir() {
+    printf '%s/%s\n' "${USER_ROOT}" "$1"
+}
+
+environment_label() {
+    case "$1" in
+        stable) printf 'Stable' ;;
+        experimental) printf 'Experimental' ;;
+        *) die "Unknown ComfyUI environment: $1" ;;
+    esac
+}
+
+ensure_host_data() {
+    local environment="$1"
+    mkdir -p "${MODEL_DIR}" "${OUTPUT_DIR}" "${INPUT_DIR}" "$(environment_user_dir "${environment}")"
+}
+
+setup_persistence() {
+    local environment="$1" container user_dir
+    container="$(environment_container "${environment}")"
+    user_dir="$(environment_user_dir "${environment}")"
+
+    if ! container_exec "${container}" test -x /opt/set_extra_paths.sh; then
+        warn "${container} does not provide the expected /opt/set_extra_paths.sh helper. Check the upstream release notes before retrying."
+        return 1
+    fi
+    container_exec "${container}" /opt/set_extra_paths.sh || return 1
+    container_exec "${container}" bash -c '
+        set -euo pipefail
+        user_dir="$1"
+        mkdir -p "${user_dir}/default/workflows"
+        if [[ -d /opt/ComfyUI/user/default/workflows ]]; then
+            cp -an /opt/ComfyUI/user/default/workflows/. "${user_dir}/default/workflows/"
+        fi
+    ' _ "${user_dir}" || return 1
+    container_exec "${container}" test -d "${MODEL_DIR}" || return 1
+    container_exec "${container}" test -d "${OUTPUT_DIR}" || return 1
+    container_exec "${container}" test -d "${INPUT_DIR}" || return 1
+    container_exec "${container}" test -d "${user_dir}" || return 1
+    if ! container_exec "${container}" bash -lc \
+            'source /etc/profile.d/99-toolbox-banner.sh >/dev/null 2>&1; alias start_comfy_ui >/dev/null'; then
+        warn "${container} does not provide the expected upstream start_comfy_ui launcher."
+        return 1
+    fi
+    if ! container_exec "${container}" grep -Fq -- '--user-directory' /opt/ComfyUI/comfy/cli_args.py; then
+        warn "${container} ComfyUI does not support the persistent --user-directory option."
+        return 1
+    fi
+    if ! container_exec "${container}" grep -Fq -- '--input-directory' /opt/ComfyUI/comfy/cli_args.py; then
+        warn "${container} ComfyUI does not support the persistent --input-directory option."
+        return 1
+    fi
+}
+
+sanity_check() {
+    local environment="$1" container output
+    container="$(environment_container "${environment}")"
+    log "Checking PyTorch GPU visibility in ${container} ..."
+    if ! output="$(container_exec "${container}" /opt/venv/bin/python -c '
+import importlib.metadata as metadata
+import torch
+print(f"PyTorch: {torch.__version__}")
+print(f"HIP: {torch.version.hip}")
+rocm_sdk = "unavailable"
+for distribution in (chr(95) + "rocm_sdk_core", "rocm"):
+    try:
+        rocm_sdk = metadata.version(distribution)
+        break
+    except metadata.PackageNotFoundError:
+        pass
+print(f"ROCm SDK: {rocm_sdk}")
+available = torch.cuda.is_available()
+print(f"torch.cuda.is_available(): {available}")
+if available:
+    properties = torch.cuda.get_device_properties(0)
+    architecture = getattr(properties, "gcnArchName", "unknown")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU architecture: {architecture}")
+' 2>&1)"; then
+        printf '%s\n' "${output}" >&2
+        warn "PyTorch diagnostics failed in ${container}."
+        return 1
+    fi
+    printf '%s\n' "${output}"
+    if ! grep -Fq 'torch.cuda.is_available(): True' <<<"${output}"; then
+        warn "PyTorch cannot use the GPU in ${container}."
+        return 1
+    fi
+    if ! grep -Eqi 'gfx1151|Radeon 80(50|60)S|Strix Halo' <<<"${output}"; then
+        warn "PyTorch is available, but its device report did not explicitly identify gfx1151."
+    fi
+}
+
+create_environment() {
+    local environment="$1" container image
+    require_commands
+    require_strix_halo
+    require_device_access rocm
+    ensure_host_data "${environment}"
+    container="$(environment_container "${environment}")"
+    image="$(environment_image "${environment}")"
+
+    if have_container "${container}"; then
+        log "${container} already exists; leaving it intact. Use Update/refresh to replace it."
+        setup_persistence "${environment}"
+        sanity_check "${environment}"
+        return
+    fi
+
+    log "Pulling ${image} ..."
+    podman pull "${image}"
+    log "Creating ${container} with rootless Strix Halo GPU access ..."
+    distrobox create \
+        --name "${container}" \
+        --image "${image}" \
+        --yes \
+        --no-entry \
+        --additional-flags "${CONTAINER_FLAGS}"
+    setup_persistence "${environment}"
+    sanity_check "${environment}"
+    log "$(environment_label "${environment}") ComfyUI is ready. Launch it from the menu or run: ujust strix-halo-comfyui -- launch ${environment}"
+}
+
+confirm_container_reset() {
+    local action="$1" container="$2"
+    if [[ "${STRIX_HALO_COMFYUI_ASSUME_YES:-0}" == "1" ]]; then
+        return 0
+    fi
+    if [[ ! -t 0 ]]; then
+        die "${action} requires confirmation in an interactive terminal. Set STRIX_HALO_COMFYUI_ASSUME_YES=1 only for intentional automation."
+    fi
+    printf '%s will replace the disposable container %s.\n' "${action}" "${container}"
+    printf 'Files changed only inside /opt, /usr, or other container system paths will be lost. HOME data will remain.\n'
+    local answer
+    read -r -p "Continue? [y/N] " answer
+    [[ "${answer}" =~ ^[Yy]$ ]]
+}
+
+cleanup_old_images() {
+    local image_id image_ref
+    while read -r image_id image_ref; do
+        [[ "${image_ref}" == "${IMAGE_REPOSITORY}:<none>" ]] || continue
+        podman image rm "${image_id}" >/dev/null 2>&1 || true
+    done < <(podman images --format '{{.ID}} {{.Repository}}:{{.Tag}}')
+}
+
+update_environment() {
+    local environment="$1" container image previous_image_id
+    require_commands
+    require_strix_halo
+    require_device_access rocm
+    container="$(environment_container "${environment}")"
+    image="$(environment_image "${environment}")"
+    have_container "${container}" || die "${container} is not installed; choose Install/create instead."
+    previous_image_id="$(podman inspect --format '{{.Image}}' "${container}" 2>/dev/null || true)"
+    [[ -n "${previous_image_id}" ]] || die "Could not determine the current image ID for ${container}; refusing an update without a rollback target."
+    if ! confirm_container_reset "Update/refresh" "${container}"; then
+        log "Update canceled; ${container} was not changed."
+        return 0
+    fi
+
+    ensure_host_data "${environment}"
+    log "Pulling the current ${image} before replacing the container ..."
+    podman pull "${image}"
+    distrobox rm --force "${container}"
+    if distrobox create \
+            --name "${container}" \
+            --image "${image}" \
+            --yes \
+            --no-entry \
+            --additional-flags "${CONTAINER_FLAGS}" \
+            && setup_persistence "${environment}" \
+            && sanity_check "${environment}"; then
+        cleanup_old_images
+        log "${container} was refreshed from ${image}; models, inputs, outputs, workflows, and settings in HOME were preserved."
+        return 0
+    fi
+
+    warn "The refreshed ${container} failed creation or verification; restoring its previous image."
+    if have_container "${container}"; then
+        distrobox rm --force "${container}" || true
+    fi
+    if distrobox create \
+            --name "${container}" \
+            --image "${previous_image_id}" \
+            --yes \
+            --no-entry \
+            --additional-flags "${CONTAINER_FLAGS}" \
+            && setup_persistence "${environment}"; then
+        die "Refresh failed, but ${container} was restored from its previous image."
+    fi
+    die "Refresh failed and the previous ${container} could not be restored automatically. Persistent HOME data remains untouched."
+}
+
+remove_environment() {
+    local environment="$1" container
+    require_commands
+    container="$(environment_container "${environment}")"
+    if ! have_container "${container}"; then
+        log "${container} is already absent. Persistent HOME data was not changed."
+        return 0
+    fi
+    if ! confirm_container_reset "Remove" "${container}"; then
+        log "Removal canceled; ${container} was not changed."
+        return 0
+    fi
+    distrobox rm --force "${container}"
+    log "Removed ${container}. Persistent data remains in ${MODEL_DIR}, ${OUTPUT_DIR}, ${INPUT_DIR}, and $(environment_user_dir "${environment}")."
+}
+
+require_environment() {
+    local environment="$1" container
+    require_commands
+    container="$(environment_container "${environment}")"
+    have_container "${container}" || die "${container} is not installed. Run: ujust strix-halo-comfyui -- install ${environment}"
+}
+
+launch_environment() {
+    local environment="$1" container user_dir
+    require_environment "${environment}"
+    require_strix_halo
+    require_device_access rocm
+    container="$(environment_container "${environment}")"
+    user_dir="$(environment_user_dir "${environment}")"
+    ensure_host_data "${environment}"
+    setup_persistence "${environment}"
+    log "Launching $(environment_label "${environment}") ComfyUI at ${COMFY_URL}"
+    log "It is bound locally; stop it with Ctrl+C."
+    exec distrobox enter --name "${container}" -- bash -lic \
+        'start_comfy_ui "$@"' _ --user-directory "${user_dir}" --input-directory "${INPUT_DIR}"
+}
+
+enter_environment() {
+    local environment="$1" container
+    require_environment "${environment}"
+    container="$(environment_container "${environment}")"
+    exec distrobox enter --name "${container}"
+}
+
+model_manager() {
+    local environment="$1" container
+    require_environment "${environment}"
+    container="$(environment_container "${environment}")"
+    ensure_host_data "${environment}"
+    setup_persistence "${environment}"
+    log "Opening the upstream Model Manager. Downloads are explicit and are stored in ${MODEL_DIR}."
+    exec distrobox enter --name "${container}" -- bash -lic 'model_manager'
+}
+
+status_environment() {
+    local environment="$1" container expected_image actual_image running
+    container="$(environment_container "${environment}")"
+    expected_image="$(environment_image "${environment}")"
+    log "$(environment_label "${environment}") ComfyUI"
+    log "  Container: ${container}"
+    log "  Channel: ${expected_image}"
+    if ! command -v podman >/dev/null 2>&1; then
+        warn "  Podman is unavailable; container status cannot be read."
+        return 0
+    fi
+    if have_container "${container}"; then
+        actual_image="$(podman inspect --format '{{.Config.Image}}' "${container}" 2>/dev/null || true)"
+        if container_running "${container}"; then running=yes; else running=no; fi
+        log "  Installed: yes"
+        log "  Running: ${running}"
+        log "  Backing image: ${actual_image:-unknown}"
+        [[ "${actual_image}" == "${expected_image}" ]] || warn "  The installed container does not use the expected channel tag. Update/refresh will correct it."
+    else
+        log "  Installed: no"
+        log "  Running: no"
+    fi
+    log "  User data: $(environment_user_dir "${environment}")"
+}
+
+diagnose_environment() {
+    local environment="$1" container user_dir
+    container="$(environment_container "${environment}")"
+    user_dir="$(environment_user_dir "${environment}")"
+    status_environment "${environment}"
+    if have_container "${container}"; then
+        container_exec "${container}" test -x /opt/set_extra_paths.sh \
+            && log "  Upstream persistent-path helper: present" \
+            || warn "  Upstream persistent-path helper: missing"
+        container_exec "${container}" test -f /opt/ComfyUI/extra_model_paths.yaml \
+            && log "  Persistent model configuration: present" \
+            || warn "  Persistent model configuration: missing; rerun Install/create"
+        container_exec "${container}" test -d "${user_dir}" \
+            && log "  Persistent user directory: visible" \
+            || warn "  Persistent user directory: missing; rerun Install/create"
+        sanity_check "${environment}" || true
+        container_exec "${container}" bash -c '
+            if [[ -d /opt/ComfyUI/.git ]]; then
+                printf "ComfyUI revision: "
+                git -c safe.directory=/opt/ComfyUI -C /opt/ComfyUI rev-parse --short HEAD 2>/dev/null || printf "unknown\n"
+            else
+                printf "ComfyUI path: /opt/ComfyUI (git revision unavailable)\n"
+            fi
+        '
+    fi
+}
+
+diagnostics() {
+    local environment
+    log "Strix Halo ComfyUI diagnostics"
+    log "==============================="
+    if is_strix_halo; then
+        log "Hardware gate: PASS (AMD 1002:1586 + amdgpu + Ryzen AI MAX)"
+    else
+        warn "Hardware gate: FAIL; lifecycle and launch actions will stop unless the diagnostic override is set."
+    fi
+    [[ -d /dev/dri ]] && log "/dev/dri: present" || warn "/dev/dri: absent"
+    readable_render_node && log "DRM render node access: read/write" || warn "DRM render node access: missing"
+    if [[ -e /dev/kfd ]]; then
+        [[ -r /dev/kfd && -w /dev/kfd ]] && log "/dev/kfd: read/write" || warn "/dev/kfd: present but inaccessible"
+    else
+        warn "/dev/kfd: absent"
+    fi
+    for environment in stable experimental; do
+        diagnose_environment "${environment}"
+    done
+    log "Shared models: ${MODEL_DIR}"
+    log "Shared inputs: ${INPUT_DIR}"
+    log "Shared outputs: ${OUTPUT_DIR}"
+    log "No host ROCm/PyTorch packages or security policy changes are made."
+}
+
+show_help() {
+    cat <<EOF
+Strix Halo ComfyUI uses kyuz0's upstream gfx1151 images in rootless Distrobox containers.
+
+  Stable (recommended): ${STABLE_IMAGE}
+  Experimental:         ${EXPERIMENTAL_IMAGE}
+
+Persistent shared data:
+  Models:  ${MODEL_DIR}
+  Inputs:  ${INPUT_DIR}
+  Outputs: ${OUTPUT_DIR}
+  Per-environment workflows/settings: ${USER_ROOT}/{stable,experimental}
+
+Normal launch reuses the installed container and never pulls an image. Update
+explicitly pulls the selected channel and recreates only that container. Changes
+made solely in /opt, /usr, or other container system paths are disposable.
+
+The upstream start_comfy_ui launcher supplies current Strix Halo workarounds and
+binds to ${COMFY_URL}. The upstream model_manager performs optional model downloads.
+No models are downloaded during installation.
+
+Direct commands:
+  ujust strix-halo-comfyui -- install [stable|experimental|both]
+  ujust strix-halo-comfyui -- launch [stable|experimental]
+  ujust strix-halo-comfyui -- shell [stable|experimental]
+  ujust strix-halo-comfyui -- update [stable|experimental|both]
+  ujust strix-halo-comfyui -- models [stable|experimental]
+  ujust strix-halo-comfyui -- status [stable|experimental|both]
+  ujust strix-halo-comfyui -- remove [stable|experimental|both]
+  ujust strix-halo-comfyui -- diagnostics
+
+Documentation: https://github.com/linuxmunchies/vimmite-v6/blob/main/docs/strix-halo-comfyui.md
+EOF
+}
+
+pause_menu() {
+    [[ -t 0 ]] || return 0
+    read -r -p "Press Enter to return to the menu..." _
+}
+
+choose() {
+    local prompt="$1"
+    shift
+    local selection
+    if command -v ugum >/dev/null 2>&1; then
+        printf '\n%s\n' "${prompt}" >&2
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return; }
+            echo "Choose a number from the list." >&2
+        done
+    fi
+}
+
+environment_menu() {
+    local environment="$1" choice
+    while true; do
+        status_environment "${environment}"
+        choice="$(choose "$(environment_label "${environment}") ComfyUI" \
+            "Install/create" \
+            "Launch locally" \
+            "Enter shell" \
+            "Update/refresh" \
+            "Open Model Manager" \
+            "Show diagnostics" \
+            "Remove container" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Install/create") create_environment "${environment}" ;;
+            "Launch locally") launch_environment "${environment}" ;;
+            "Enter shell") enter_environment "${environment}" ;;
+            "Update/refresh") update_environment "${environment}" ;;
+            "Open Model Manager") model_manager "${environment}" ;;
+            "Show diagnostics") diagnose_environment "${environment}" ;;
+            "Remove container") remove_environment "${environment}" ;;
+            "Back") return 0 ;;
+        esac
+        pause_menu
+    done
+}
+
+menu() {
+    local choice
+    [[ -t 0 ]] || die "The ComfyUI menu requires an interactive terminal. Use a direct subcommand for automation."
+    while true; do
+        choice="$(choose "Strix Halo image generation / ComfyUI" \
+            "Stable (recommended)" \
+            "Experimental (upstream dev)" \
+            "Shared data locations" \
+            "Diagnostics" \
+            "Help" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Stable"*) environment_menu stable ;;
+            "Experimental"*) environment_menu experimental ;;
+            "Shared data locations")
+                log "Models: ${MODEL_DIR}"
+                log "Inputs: ${INPUT_DIR}"
+                log "Outputs: ${OUTPUT_DIR}"
+                log "Stable workflows/settings: $(environment_user_dir stable)"
+                log "Experimental workflows/settings: $(environment_user_dir experimental)"
+                pause_menu
+                ;;
+            "Diagnostics") diagnostics; pause_menu ;;
+            "Help") show_help; pause_menu ;;
+            "Back") return 0 ;;
+        esac
+    done
+}
+
+run_for_target() {
+    local action="$1" target="$2" environment
+    if [[ "${target}" == both ]]; then
+        for environment in stable experimental; do
+            "${action}_environment" "${environment}"
+        done
+    else
+        "${action}_environment" "${target}"
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|update|models|status|remove|diagnostics|help] [stable|experimental|both]
+EOF
+}
+
+main() {
+    local action="${1:-menu}" target="${2:-stable}"
+    case "${action}" in
+        menu) menu ;;
+        install|update|remove)
+            [[ "${target}" =~ ^(stable|experimental|both)$ ]] || { usage >&2; exit 2; }
+            if [[ "${action}" == install ]]; then action=create; fi
+            run_for_target "${action}" "${target}"
+            ;;
+        launch|shell|models)
+            [[ "${target}" =~ ^(stable|experimental)$ ]] || { usage >&2; exit 2; }
+            case "${action}" in
+                launch) launch_environment "${target}" ;;
+                shell) enter_environment "${target}" ;;
+                models) model_manager "${target}" ;;
+            esac
+            ;;
+        status)
+            [[ "${target}" =~ ^(stable|experimental|both)$ ]] || { usage >&2; exit 2; }
+            if [[ "${target}" == both ]]; then
+                status_environment stable
+                status_environment experimental
+            else
+                status_environment "${target}"
+            fi
+            ;;
+        diagnostics) diagnostics ;;
+        help) show_help ;;
+        *) usage >&2; exit 2 ;;
+    esac
+}
+
+main "$@"

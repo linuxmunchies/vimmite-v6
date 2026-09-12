@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (( EUID == 0 )); then
+    echo "Refusing to install AI CLIs as root. Run this command as your regular user." >&2
+    exit 1
+fi
+
+readonly user_prefix="${HOME}/.local"
+
+usage() {
+    cat <<'EOF'
+Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|menu|help]
+
+Install an AI coding CLI into the current user's environment.
+EOF
+}
+
+pause_menu() {
+    read -r -p "Press Enter to return to the menu..." _ || return 1
+}
+
+choose_cli() {
+    local prompt="$1"
+    shift
+    local selection
+
+    if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        gum choose --header "${prompt}" "$@"
+    else
+        select selection in "$@"; do
+            if [[ -n "${selection}" ]]; then
+                printf '%s\n' "${selection}"
+                return 0
+            fi
+            echo "Choose a number from the menu." >&2
+        done
+        return 1
+    fi
+}
+
+install_npm_cli() {
+    local package="$1"
+    local name="$2"
+
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+        echo "Cannot install ${name}: both node and npm are required." >&2
+        echo "Install Node.js and npm, then run this command again." >&2
+        return 1
+    fi
+
+    if ! mkdir -p "${user_prefix}/bin"; then
+        echo "Cannot create ${user_prefix}/bin." >&2
+        return 1
+    fi
+    echo "Installing ${name} for the current user..."
+    if ! npm install --global --prefix "${user_prefix}" "${package}"; then
+        echo "The ${name} npm installation failed." >&2
+        return 1
+    fi
+    echo "${name} installed in ${user_prefix}/bin."
+    echo "If the command is not found, add ${user_prefix}/bin to PATH and open a new shell."
+}
+
+install_script_cli() {
+    local url="$1"
+    local name="$2"
+    local shell="$3"
+
+    (
+        local installer
+        trap 'rm -f -- "${installer:-}"' EXIT
+
+        if ! installer="$(mktemp)"; then
+            echo "Could not create a temporary file for the ${name} installer." >&2
+            exit 1
+        fi
+        echo "Downloading ${name} installer..."
+        if ! curl -fsSL "${url}" -o "${installer}"; then
+            echo "Could not download the ${name} installer." >&2
+            exit 1
+        fi
+        echo "Running the ${name} installer..."
+        if ! "${shell}" "${installer}"; then
+            echo "The ${name} installer failed." >&2
+            exit 1
+        fi
+        echo "${name} installed."
+    )
+}
+
+install_cli() {
+    local cli="$1"
+
+    case "${cli}" in
+        codex)
+            install_npm_cli '@openai/codex' 'Codex'
+            ;;
+        grok)
+            install_script_cli 'https://x.ai/cli/install.sh' 'Grok Build' bash
+            ;;
+        pi)
+            install_script_cli 'https://pi.dev/install.sh' 'Pi' sh
+            ;;
+        omp)
+            install_script_cli 'https://omp.sh/install' 'Oh My Pi' sh
+            ;;
+        claude)
+            install_script_cli 'https://claude.ai/install.sh' 'Claude Code' bash
+            ;;
+        dsh)
+            install_npm_cli '@deepseek-ai/dsh' 'DeepSeek Harness'
+            echo "Launch it with: dsh web"
+            ;;
+        opencode)
+            install_script_cli 'https://opencode.ai/install' 'OpenCode' bash
+            ;;
+        *)
+            echo "Unknown AI CLI: ${cli}" >&2
+            usage >&2
+            return 2
+            ;;
+    esac
+}
+
+menu() {
+    local selection
+    local -a choices=(
+        'Install Codex'
+        'Install Grok Build'
+        'Install Pi'
+        'Install OMP (Oh My Pi)'
+        'Install Claude Code'
+        'Install DSH (DeepSeek Harness)'
+        'Install OpenCode'
+        'Quit'
+    )
+
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        echo "The AI CLI installer menu requires an interactive terminal." >&2
+        echo "Pass one of codex, grok, pi, omp, claude, dsh, or opencode directly." >&2
+        return 1
+    fi
+
+    while true; do
+        selection="$(choose_cli 'Install an AI CLI' "${choices[@]}")" || return 0
+        case "${selection}" in
+            'Install Codex') install_cli codex || true ;;
+            'Install Grok Build') install_cli grok || true ;;
+            'Install Pi') install_cli pi || true ;;
+            'Install OMP (Oh My Pi)') install_cli omp || true ;;
+            'Install Claude Code') install_cli claude || true ;;
+            'Install DSH (DeepSeek Harness)') install_cli dsh || true ;;
+            'Install OpenCode') install_cli opencode || true ;;
+            Quit) return 0 ;;
+        esac
+        pause_menu || return 0
+    done
+}
+
+case "${1:-menu}" in
+    menu) menu ;;
+    help|-h|--help) usage ;;
+    codex|grok|pi|omp|claude|dsh|opencode)
+        [[ $# -eq 1 ]] || { echo "Unexpected extra arguments: ${*:2}" >&2; exit 2; }
+        install_cli "$1"
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

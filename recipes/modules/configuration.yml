@@ -22,6 +22,7 @@ modules:
     system:
       enabled:
         - vimmite-brew-packages.service
+        - vimmite-user-groups.service
     user:
       enabled:
         - vimmite-first-login.service

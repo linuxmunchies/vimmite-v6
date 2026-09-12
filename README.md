@@ -43,10 +43,11 @@ The container package on GHCR must be public for anonymous downloads and
 make the package public.
 
 Start with the [installation guide](docs/installation.md), which covers building
-an ISO, installing it, or rebasing an existing Fedora Atomic desktop. ISO builds
-need a Linux machine with KVM/QEMU and at least 70 GiB of free workspace. The
-workflow publishes container images; it does not attach downloadable ISOs.
-Back up personal files before installing or rebasing.
+an ISO, installing it, or rebasing an existing Fedora Atomic desktop. Local ISO
+builds need Podman and one sudo login for rootful Lorax; they do not need KVM.
+You can also run the **Build installer ISO** workflow from the Actions tab.
+The image workflow publishes container images; it does not attach ISOs. Back up
+personal files before installing or rebasing.
 
 After booting, connect to the network so application setup can finish, then run:
 
@@ -68,7 +69,8 @@ Atomic rollback covers the system deployment; personal files need a separate
 GitHub Actions builds and publishes automatically on non-documentation pushes
 and the daily schedule. You can also start a build with `workflow_dispatch`.
 There is no manual release-approval input. Pull requests run validation and an
-image build without publishing.
+image build without publishing. Installer ISOs are a separate
+`workflow_dispatch` job, **Build installer ISO**.
 
 Images are signed using the `SIGNING_SECRET` Actions secret. Only the public
 verification key, [`cosign.pub`](cosign.pub), belongs in this repository.
@@ -96,7 +98,7 @@ code conventions. Physical testing remains separate from automatic publication.
 | `files/vimmite/usr/libexec/` | Runtime helpers behind the setup commands |
 | `files/justfiles/` | Discoverable `ujust` commands and small shell recipes |
 | `files/scripts/` | Build-time installers for pinned external artifacts |
-| `scripts/` | Repository validation, ISO builds, and optional GHCR login |
+| `scripts/` | Repository validation, ISO creation, and optional GHCR login |
 | `docs/` | Installation, configuration, design, and testing guides |
 | `docs/history/` | Historical investigations and migration notes |
 | `.github/` | Build workflow, ownership, and dependency updates |
@@ -106,7 +108,9 @@ code conventions. Physical testing remains separate from automatic publication.
 - [Installation and updates](docs/installation.md)
 - [Optional setup and hardware profiles](docs/post-install.md)
 - [Development container](docs/development.md)
-- [Strix Halo local AI](docs/strix-halo-ai.md) and [model configuration](docs/strix-halo-ai-configuration.md)
+- [Strix Halo local AI](docs/strix-halo-ai.md),
+  [ComfyUI](docs/strix-halo-comfyui.md), and
+  [model configuration](docs/strix-halo-ai-configuration.md)
 - [Branding](docs/branding.md)
 - [Personal-data backup](docs/personal-data-backup.md)
 - [Physical test checklist](docs/test-checklist.md)

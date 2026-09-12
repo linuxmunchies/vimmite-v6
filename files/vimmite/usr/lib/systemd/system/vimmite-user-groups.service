@@ -1,0 +1,15 @@
+[Unit]
+Description=Add local users to video, render, kvm, and libvirt
+Documentation=man:usermod(8)
+DefaultDependencies=yes
+After=local-fs.target systemd-sysusers.service systemd-tmpfiles-setup.service
+Before=display-manager.service graphical.target
+ConditionPathExists=/etc/passwd
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/vimmite-user-groups
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

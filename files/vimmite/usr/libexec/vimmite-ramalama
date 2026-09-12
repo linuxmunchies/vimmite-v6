@@ -637,7 +637,8 @@ menu() {
         '5. Vulkan smoke test'
         '6. Check prerequisites'
         '7. Show help'
-        '8. Exit'
+        '8. Install AI coding tools'
+        '9. Exit'
     )
     local selection number
     while true; do
@@ -657,8 +658,9 @@ menu() {
             5) smoke_cmd ;;
             6) preflight_cmd ;;
             7) show_help ;;
-            8) return 0 ;;
-            *) warn "Choose a number from 1 through 8." ;;
+            8) /usr/libexec/vimmite-install-ai-cli ;;
+            9) return 0 ;;
+            *) warn "Choose a number from 1 through 9." ;;
         esac
         pause_menu
     done

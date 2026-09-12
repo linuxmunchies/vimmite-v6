@@ -22,10 +22,15 @@ vimmite-support-bundle output="":
 vimmite-dev *args:
     /usr/libexec/vimmite-devbox "$@"
 
-[doc('Manage stable Vulkan and ROCm llama.cpp Distroboxes for Strix Halo/gfx1151')]
+[doc('Manage llama.cpp and ComfyUI Distroboxes for Strix Halo/gfx1151')]
 [group('Strix Halo AI')]
 strix-halo-ai *args:
     /usr/libexec/vimmite-strix-halo-ai "$@"
+
+[doc('Manage stable and experimental ComfyUI Distroboxes for Strix Halo/gfx1151')]
+[group('Strix Halo AI')]
+strix-halo-comfyui *args:
+    /usr/libexec/vimmite-strix-halo-comfyui "$@"
 
 [doc('Install the image-baked Zim setup without overwriting shell configuration')]
 [group('Vimmite')]
@@ -264,3 +269,8 @@ ramalama-run-liquid *prompt:
 [private]
 ramalama-run-north *prompt:
     /usr/libexec/vimmite-ramalama run north "$@"
+
+[doc('Install Codex, Grok Build, Pi, Oh My Pi, Claude Code, DSH, or OpenCode')]
+[group('AI tools')]
+install-ai-cli tool="menu":
+    /usr/libexec/vimmite-install-ai-cli "$@"

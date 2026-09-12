@@ -51,10 +51,12 @@ true`; every retained deployment must continue to include `/usr/bin/zsh` for
 rollback-safe login.
 
 `setup-virtualization` enables libvirt's modular sockets and default NAT
-network. Administrators in `wheel` are authorized by the image's
-polkit rule, so a separate group change and logout are not required. The command
-also grants the `qemu` service account traversal-only access to your private
-home directory so ISO images selected from `~/Downloads` can be opened.
+network. The image adds local interactive users to `video`, `render`, `kvm`,
+and `libvirt` on boot, and still authorizes `wheel` for `org.libvirt.unix.manage`
+through polkit. A new graphical or SSH login is required before the extra
+groups appear in an already-open session. The command also grants the `qemu`
+service account traversal-only access to your private home directory so ISO
+images selected from `~/Downloads` can be opened.
 
 ## Development box
 
@@ -77,6 +79,45 @@ removes the container after confirmation and keeps both shared files and the
 reusable local image. Project-specific language versions belong in `mise.toml`,
 `uv.lock`, language-native project files, or `.devcontainer/`, not in the host
 image. See the [complete development-box guide](development.md).
+
+## AI coding tools
+
+Open **Install AI coding tools** from the setup AI screen, RamaLama menu, or
+Strix Halo AI menu, or run `ujust install-ai-cli`. Select one tool at a time.
+For direct installation, use `ujust install-ai-cli <tool>` with `codex`, `grok`,
+`pi`, `omp`, `claude`, `dsh`, or `opencode`.
+
+These are optional per-user installations, run without sudo. Codex and DSH
+need Node.js and npm in the current environment and install under `~/.local`.
+Ensure `~/.local/bin` is on your PATH. If Node/npm is unavailable on the host,
+enter the development container described above and install the package there
+with `npm install -g --prefix "$HOME/.local" @openai/codex` or
+`npm install -g --prefix "$HOME/.local" @deepseek-ai/dsh`. Run that CLI
+inside the container so its Node.js runtime is available.
+The other choices download and run the upstream installer using these URLs:
+
+| Tool | Installer or npm package |
+| --- | --- |
+| Codex | `@openai/codex` |
+| Grok Build | <https://x.ai/cli/install.sh> |
+| Pi | <https://pi.dev/install.sh> |
+| OMP / Oh My Pi | <https://omp.sh/install> |
+| Claude Code | <https://claude.ai/install.sh> |
+| DSH / DeepSeek Harness | `@deepseek-ai/dsh` |
+| OpenCode | <https://opencode.ai/install> |
+
+DSH installation does not start its web server; launch it afterward with
+`dsh web`. The upstream quick start is `npx @deepseek-ai/dsh web`
+([DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)).
+Follow each installer's PATH guidance and open a new terminal before use.
+Authentication is handled by each tool when you launch it.
+
+To undo the npm installations, run
+`npm uninstall -g --prefix "$HOME/.local" @openai/codex` or
+`npm uninstall -g --prefix "$HOME/.local" @deepseek-ai/dsh`.
+For script-installed tools, follow the upstream uninstall instructions for
+the installation location reported by the installer; retain configuration
+and credentials unless you intend to remove them too.
 
 ## RamaLama
 
@@ -116,18 +157,20 @@ smoke` needs the Liquid model already local. Previous `ramalama-setup` and
 
 ## Strix Halo local AI
 
-Ryzen AI MAX/`gfx1151` systems have a separate Distrobox-based llama.cpp path:
+Ryzen AI MAX/`gfx1151` systems have separate Distrobox-based llama.cpp and
+ComfyUI paths:
 
 ```bash
 ujust strix-halo-ai
 ```
 
-The single menu manages stable Vulkan RADV and ROCm toolboxes, downloads the
-selected Qwen and Muse GGUFs into the shared `~/ai/models` convention, installs
-host-facing llama.cpp commands, and runs GPU diagnostics. It refuses other AMD
-GPUs; use RamaLama on those systems. See the dedicated
-[Strix Halo AI guide](strix-halo-ai.md) for backend details, wrapper defaults,
-Pi Agent configuration, updates, removal, and troubleshooting.
+The single menu manages stable Vulkan RADV and ROCm llama.cpp toolboxes plus
+stable and experimental upstream ComfyUI containers. It downloads only models
+the user explicitly selects, keeps ComfyUI models, inputs, outputs, workflows,
+and settings in the user's home, and runs GPU diagnostics. It refuses other AMD
+GPUs; use RamaLama on those systems. See the [Strix Halo AI guide](strix-halo-ai.md)
+for llama.cpp and the [Strix Halo ComfyUI guide](strix-halo-comfyui.md) for image
+generation lifecycle and storage.
 
 ## Lossless Scaling
 

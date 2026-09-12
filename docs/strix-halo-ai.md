@@ -1,10 +1,14 @@
 # Strix Halo local AI
 
-Vimmite provides a dedicated llama.cpp path for AMD Ryzen AI MAX "Strix Halo"
-APUs (`gfx1151`). It uses stable images from
+Vimmite provides dedicated llama.cpp and ComfyUI paths for AMD Ryzen AI MAX
+"Strix Halo" APUs (`gfx1151`). The llama.cpp subsystem uses stable images from
 [kyuz0/amd-strix-halo-toolboxes](https://github.com/kyuz0/amd-strix-halo-toolboxes)
 inside rootless Distrobox containers. It does not install ROCm, llama.cpp, or
 model weights on the immutable system image.
+
+The same `ujust strix-halo-ai` menu opens the separate stable/experimental
+ComfyUI manager. See [Strix Halo ComfyUI](strix-halo-comfyui.md) for image and
+video generation, persistent data, and update behavior.
 
 This is separate from RamaLama. Use RamaLama for broader AMD hardware such as
 Radeon 780M systems. The only shared convention is that persistent model files
@@ -18,8 +22,9 @@ Run:
 ujust strix-halo-ai
 ```
 
-The menu installs, updates, verifies, or removes either backend and downloads
-the recommended models. Its lifecycle operations are idempotent. Install keeps
+The menu installs, updates, verifies, or removes either llama.cpp backend,
+downloads the recommended GGUF models, and opens the ComfyUI submenu. Its
+lifecycle operations are idempotent. Install keeps
 an existing container; Update/recreate intentionally replaces it from the
 newest image for the same stable tag; Remove leaves all model files intact.
 

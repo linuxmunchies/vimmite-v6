@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Add local interactive users to the device and virtualization groups the
+# workstation image expects. Idempotent; safe to run on every boot so new
+# accounts and upgraded hosts converge without a manual usermod.
+#
+# rpm-ostree keeps package groups in /usr/lib/group (nss altfiles). usermod
+# and gpasswd only edit /etc/group, so membership has to be written there.
+set -euo pipefail
+
+readonly wanted_groups=(video render kvm libvirt)
+
+login_def() {
+    local key="$1" default="$2" value=""
+    if [[ -r /etc/login.defs ]]; then
+        value="$(awk -v key="${key}" '$1 == key { print $2; exit }' /etc/login.defs)"
+    fi
+    printf '%s\n' "${value:-${default}}"
+}
+
+group_entry() {
+    local group_name="$1"
+    grep "^${group_name}:" /etc/group 2>/dev/null \
+        || grep "^${group_name}:" /usr/lib/group 2>/dev/null \
+        || true
+}
+
+user_in_entry() {
+    local user_name="$1" entry="$2" members
+    members="$(printf '%s\n' "${entry}" | awk -F: '{ print $4 }')"
+    tr ',' '\n' <<<"${members}" | grep -Fxq "${user_name}"
+}
+
+ensure_membership() {
+    local user_name="$1" group_name="$2" entry members new_entry
+    entry="$(group_entry "${group_name}")"
+    if [[ -z "${entry}" ]]; then
+        echo "Required group is missing: ${group_name}" >&2
+        return 1
+    fi
+    if user_in_entry "${user_name}" "${entry}"; then
+        return 0
+    fi
+    members="$(printf '%s\n' "${entry}" | awk -F: '{ print $4 }')"
+    if [[ -n "${members}" ]]; then
+        new_entry="${entry%,},${user_name}"
+    else
+        new_entry="${entry}${user_name}"
+    fi
+    if grep -q "^${group_name}:" /etc/group; then
+        sed -i "s|^${group_name}:.*|${new_entry}|" /etc/group
+    else
+        printf '%s\n' "${new_entry}" >> /etc/group
+    fi
+    echo "Added ${user_name} to ${group_name}"
+}
+
+uid_min="$(login_def UID_MIN 1000)"
+uid_max="$(login_def UID_MAX 60000)"
+status=0
+
+for group_name in "${wanted_groups[@]}"; do
+    if [[ -z "$(group_entry "${group_name}")" ]]; then
+        echo "Required group is missing: ${group_name}" >&2
+        exit 1
+    fi
+done
+
+while IFS=: read -r user_name _ user_uid _ _ user_home user_shell; do
+    [[ "${user_uid}" -ge "${uid_min}" && "${user_uid}" -le "${uid_max}" ]] || continue
+    case "${user_shell}" in
+        */nologin|*/false|*/halt|*/shutdown|*/sync) continue ;;
+    esac
+    case "${user_home}" in
+        /home/*|/var/home/*) ;;
+        *) continue ;;
+    esac
+
+    for group_name in "${wanted_groups[@]}"; do
+        if ! ensure_membership "${user_name}" "${group_name}"; then
+            status=1
+        fi
+    done
+done < /etc/passwd
+
+exit "${status}"

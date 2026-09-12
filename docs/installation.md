@@ -1,7 +1,8 @@
 # Installation and updates
 
-Run repository scripts from the repository root. The build workflow publishes
-container images automatically; ISO creation is a separate local operation.
+Run repository scripts from the repository root. The image workflow publishes
+container images automatically. ISO creation is a separate local command or
+the **Build installer ISO** workflow.
 
 ## Install from an ISO
 
@@ -12,56 +13,61 @@ You need:
 - an x86-64 AMD or Intel computer;
 - a USB drive that can be erased;
 - a backup of anything important on the target computer;
-- enough local disk space for the image layers and generated ISO; and
-- the BlueBuild CLI plus a working Podman/Docker/Buildah environment.
+- Podman, Skopeo, and enough disk for the generated ISO (about 20 GiB for a
+  netinstall, 40 GiB if you embed the image); and
+- one sudo login so Lorax can use loop devices. Do not run the script as root.
 
-BlueBuild is already installed inside BlueBuild-built systems. On another
-system, follow the [official CLI installation documentation](https://blue-build.org/how-to/local/).
+Local-from-checkout builds also need the BlueBuild CLI. On a machine that is
+not already running a BlueBuild image, follow the
+[official CLI installation documentation](https://blue-build.org/how-to/local/).
 
 BlueBuild publishes an OCI image, not a downloadable ISO. A successful `main`
 build publishes `ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`. Generate an
-installer locally using one of the modes below.
+installer from that image.
 
-The repository includes a wrapper that builds the current checkout by default,
-stores the image as a persistent OCI archive, and assembles the ISO in a small
-temporary KVM virtual machine:
+This follows BlueBuild's
+[generate-iso from a remote image](https://blue-build.org/how-to/generate-iso/)
+path. Under the hood that command runs
+[JasonN3's build-container-installer](https://github.com/JasonN3/build-container-installer)
+in a privileged container. Run the repository wrapper as your user; do not
+prefix it with `sudo`:
 
 ```bash
 scripts/build-iso.sh
 ```
 
-The finished ISO and checksum are written to `iso/`. The VM provides the real
-mount privileges Lorax needs without asking for the host administrator
-password. It requires KVM/QEMU, `mkisofs`, SSH, curl, Skopeo, BlueBuild, Podman,
-and at least 70 GiB of free workspace. Run `scripts/build-iso.sh --help` for
-output, workspace, image, and recipe overrides.
+Lorax needs loop devices, so the script asks for the administrator password
+once, keeps that sudo ticket alive, and runs a single `podman run --privileged`
+of the installer. It does not call `bluebuild generate-iso`, which re-invokes
+sudo from a child process and is what produced the repeated sudo failures.
 
-The installer embeds the image archive for offline installation and records
-the configured signed GHCR reference as the installed system's update origin
-(the default is `ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`; override it
-with `--image`). After installation, `rpm-ostree status` must show
-`ghcr.io/linuxmunchies/vimmite-v6-kinoite`, not Fedora's base image.
+The finished ISO and checksum are written to `iso/`. The default is a
+netinstall ISO: the target machine needs network access during installation to
+pull `ghcr.io/linuxmunchies/vimmite-v6-kinoite:latest`. After installation,
+`rpm-ostree status` must show that GHCR reference, not Fedora's base image.
 
-If ISO assembly needs to be retried without rebuilding the image, reuse the
-validated archive:
+To embed the image so installation can proceed offline:
 
 ```bash
-scripts/build-iso.sh --reuse-archive --iso-name vimmite-v6-kinoite-retry.iso
+scripts/build-iso.sh --offline
 ```
 
-To use the published image instead of composing the checkout, select published
-mode. The GHCR package is public, so this pull does not need registry login:
+To compose this checkout instead of using the published image:
 
 ```bash
-scripts/build-iso.sh published
+scripts/build-iso.sh local
 ```
+
+Local mode still avoids `bluebuild generate-iso recipe`, which in BlueBuild
+0.9.37 can mount an empty `/img_src` and fail with `archive file not found`
+([blue-build/cli#661](https://github.com/blue-build/cli/issues/661)).
 
 If Skopeo reports unauthorized access, the package is private again (source
 repository visibility does not control that). Then authenticate and retry:
 
 ```bash
 scripts/login-ghcr.sh
-scripts/build-iso.sh published
+scripts/build-iso.sh
 ```
 
 The login helper uses the active GitHub CLI account and passes its token to
@@ -70,14 +76,9 @@ repository. If GitHub CLI reports an expired login, run `gh auth login
 --hostname github.com`, then `gh auth refresh --hostname github.com --scopes
 read:packages`, before retrying the helper.
 
-Do not use `bluebuild generate-iso recipe` with BlueBuild 0.9.37 here. That
-version can create the local archive and then mount an empty `/img_src` into
-the installer, causing the late `archive file not found` failure tracked in
-[blue-build/cli issue #661](https://github.com/blue-build/cli/issues/661). The
-wrapper deliberately separates image composition from ISO assembly, validates
-the archive on both sides of the VM boundary, and preserves it for fast retries.
-It also verifies the SHA-256 checksum and Fedora embedded media checksum before
-reporting success.
+You can also build the same netinstall ISO without a local administrator
+password from the Actions tab: **Build installer ISO**. Download the artifact
+when the run finishes.
 
 ### Write and boot the installer
 
