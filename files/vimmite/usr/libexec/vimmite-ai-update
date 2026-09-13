@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly DEV_BOX="vimmite-dev"
+readonly -a AI_CLIS=(codex grok pi omp claude dsh opencode hermes)
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+
+devbox_exists() {
+    command -v podman >/dev/null 2>&1 && podman container exists "${DEV_BOX}" >/dev/null 2>&1
+}
+
+box_has_command() {
+    devbox_exists && [[ -f "${HOME}/.local/share/vimmite-ai/container/installed/$1" ]]
+}
+
+host_has_command() { command -v "$1" >/dev/null 2>&1; }
+
+cli_command() {
+    case "$1" in
+        codex) printf 'codex\n' ;; grok) printf 'grok\n' ;; pi) printf 'pi\n' ;;
+        omp) printf 'omp\n' ;; claude) printf 'claude\n' ;; dsh) printf 'dsh\n' ;;
+        opencode) printf 'opencode\n' ;; hermes) printf 'hermes\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+update_base_harnesses() {
+    local cli command_name updated=0 failures=0
+    for cli in "${AI_CLIS[@]}"; do
+        command_name="$(cli_command "${cli}")"
+        if host_has_command "${command_name}"; then
+            log "Updating host ${cli} ..."
+            /usr/libexec/vimmite-install-ai-cli "${cli}" host || { warn "Host ${cli} update failed."; failures=1; }
+            updated=1
+        fi
+        if box_has_command "${command_name}"; then
+            log "Updating ${cli} in ${DEV_BOX} ..."
+            /usr/libexec/vimmite-install-ai-cli "${cli}" container || { warn "${DEV_BOX} ${cli} update failed."; failures=1; }
+            updated=1
+        fi
+    done
+    (( updated == 1 )) || log "No installed AI coding harnesses were found."
+    return "${failures}"
+}
+
+update_devbox() {
+    if devbox_exists; then
+        /usr/libexec/vimmite-devbox update
+    else
+        log "${DEV_BOX} is not installed; skipping its update."
+    fi
+}
+
+update_desktop_packages() {
+    local host_packages=()
+    rpm -q chatgpt >/dev/null 2>&1 && host_packages+=(chatgpt)
+    rpm -q claude-desktop-unofficial >/dev/null 2>&1 && host_packages+=(claude-desktop-unofficial)
+    if ((${#host_packages[@]} > 0)); then
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            log "Updating host desktop RPMs through the Atomic deployment ..."
+            sudo rpm-ostree upgrade
+        elif command -v dnf5 >/dev/null 2>&1; then
+            sudo dnf5 upgrade --refresh --assumeyes "${host_packages[@]}"
+        elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf upgrade --refresh --assumeyes "${host_packages[@]}"
+        else
+            warn "No supported host RPM updater is available."
+            return 1
+        fi
+    else
+        log "No host ChatGPT/Claude desktop RPMs were found."
+    fi
+    if devbox_exists; then
+        distrobox enter --name "${DEV_BOX}" --no-tty -- bash -s <<'EOF'
+set -euo pipefail
+packages=()
+rpm -q chatgpt >/dev/null 2>&1 && packages+=(chatgpt)
+rpm -q claude-desktop-unofficial >/dev/null 2>&1 && packages+=(claude-desktop-unofficial)
+if ((${#packages[@]} > 0)); then
+    sudo dnf upgrade --refresh --assumeyes "${packages[@]}"
+else
+    echo "No ChatGPT/Claude desktop RPMs are installed in vimmite-dev."
+fi
+EOF
+    fi
+}
+
+update_comfyui() {
+    /usr/libexec/vimmite-install-ai-app comfyui update
+    if command -v podman >/dev/null 2>&1; then
+        local targets=() target
+        podman container exists strix-halo-comfyui-stable >/dev/null 2>&1 && targets+=(stable)
+        podman container exists strix-halo-comfyui-experimental >/dev/null 2>&1 && targets+=(experimental)
+        if ((${#targets[@]} == 0)); then
+            log "No Strix Halo ComfyUI containers were found."
+        else
+            target="${targets[0]}"
+            ((${#targets[@]} == 2)) && target=both
+            /usr/libexec/vimmite-strix-halo-comfyui update "${target}"
+        fi
+    fi
+}
+
+update_strix_halo() {
+    if command -v podman >/dev/null 2>&1 && \
+        { podman container exists strix-halo-vulkan >/dev/null 2>&1 || podman container exists strix-halo-rocm >/dev/null 2>&1; }; then
+        local targets=() target
+        podman container exists strix-halo-vulkan >/dev/null 2>&1 && targets+=(vulkan)
+        podman container exists strix-halo-rocm >/dev/null 2>&1 && targets+=(rocm)
+        target="${targets[0]}"
+        ((${#targets[@]} == 2)) && target=both
+        /usr/libexec/vimmite-strix-halo-ai update "${target}"
+    else
+        log "No Strix Halo llama.cpp containers were found."
+    fi
+}
+
+update_ramalama() {
+    local cli_dir="${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}"
+    if [[ -x "${RAMALAMA_BIN:-${cli_dir}/bin/ramalama}" ]]; then
+        /usr/libexec/vimmite-ramalama-install
+    else
+        log "Managed RamaLama CLI is not installed; skipping."
+    fi
+}
+
+run_all() {
+    local target failures=0
+    # Fresh shells preserve errexit inside each task while allowing all tasks
+    # to run and returning a failure if any task failed.
+    for target in devbox base comfyui strix desktop ramalama; do
+        if ! bash "${BASH_SOURCE[0]}" "${target}"; then
+            warn "${target} update failed."
+            failures=1
+        fi
+    done
+    return "${failures}"
+}
+
+choose() {
+    local prompt="$1"; shift; local selection
+    if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return 0; }
+        done
+        return 1
+    fi
+}
+
+menu() {
+    local choice
+    [[ -t 0 ]] || { echo "The AI update menu requires an interactive terminal." >&2; return 1; }
+    while true; do
+        choice="$(choose "Update Vimmite AI software" \
+            "Update everything" \
+            "Update AI coding harnesses" \
+            "Update vimmite-dev" \
+            "Update ComfyUI" \
+            "Update Strix Halo AI" \
+            "Update ChatGPT/Claude desktop RPMs" \
+            "Update RamaLama" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Update everything") run_all ;;
+            "Update AI coding harnesses") update_base_harnesses ;;
+            "Update vimmite-dev") update_devbox ;;
+            "Update ComfyUI") update_comfyui ;;
+            "Update Strix Halo AI") update_strix_halo ;;
+            "Update ChatGPT/Claude desktop RPMs") update_desktop_packages ;;
+            "Update RamaLama") update_ramalama ;;
+            "Back") return 0 ;;
+        esac
+        [[ -t 0 ]] && read -r -p "Press Enter to continue..." _ || true
+    done
+}
+
+case "${1:-menu}" in
+    menu) menu ;;
+    all|update) run_all ;;
+    base|harnesses) update_base_harnesses ;;
+    devbox) update_devbox ;;
+    comfyui) update_comfyui ;;
+    strix|strix-halo) update_strix_halo ;;
+    ramalama) update_ramalama ;;
+    desktop|desktop-rpms) update_desktop_packages ;;
+    help|-h|--help)
+        echo "Usage: vimmite-ai-update [menu|all|base|devbox|comfyui|strix|desktop|ramalama]"
+        ;;
+    *) echo "Unknown update target: $1" >&2; exit 2 ;;
+esac

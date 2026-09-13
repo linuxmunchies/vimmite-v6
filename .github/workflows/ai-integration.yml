@@ -1,0 +1,26 @@
+name: AI integration tests
+on:
+  push:
+    paths:
+      - 'files/vimmite/usr/libexec/vimmite-*'
+      - 'files/justfiles/vimmite.just'
+      - 'tests/test_ai_integration.py'
+      - '.github/workflows/ai-integration.yml'
+  pull_request:
+    paths:
+      - 'files/vimmite/usr/libexec/vimmite-*'
+      - 'files/justfiles/vimmite.just'
+      - 'tests/test_ai_integration.py'
+      - '.github/workflows/ai-integration.yml'
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -v
+      - name: Shell syntax and diagnostics
+        run: |
+          for name in ai ai-update install-ai-cli install-ai-app devbox strix-halo-ai; do
+            bash -n "files/vimmite/usr/libexec/vimmite-$name"
+            shellcheck --severity=warning "files/vimmite/usr/libexec/vimmite-$name"
+          done

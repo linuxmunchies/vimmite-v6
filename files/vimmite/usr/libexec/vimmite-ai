@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() { printf '%s\n' "$*"; }
+
+pause_menu() {
+    [[ -t 0 ]] || return 0
+    read -r -p "Press Enter to return to the AI menu..." _ || true
+}
+
+choose() {
+    local prompt="$1"; shift; local selection
+    if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return 0; }
+            echo "Choose a number from the list." >&2
+        done
+        return 1
+    fi
+}
+
+install_menu() {
+    local choice
+    while true; do
+        choice="$(choose "Install or manage an AI tool" \
+            "AI coding harnesses and CLIs" \
+            "ChatGPT Desktop" \
+            "Claude Desktop" \
+            "ComfyUI" \
+            "Back")" || return 0
+        case "${choice}" in
+            "AI coding harnesses and CLIs") /usr/libexec/vimmite-install-ai-cli menu ;;
+            "ChatGPT Desktop") /usr/libexec/vimmite-install-ai-app chatgpt menu ;;
+            "Claude Desktop") /usr/libexec/vimmite-install-ai-app claude menu ;;
+            "ComfyUI") /usr/libexec/vimmite-install-ai-app comfyui menu ;;
+            "Back") return 0 ;;
+        esac
+        pause_menu
+    done
+}
+
+status_menu() {
+    log "AI software status"
+    /usr/libexec/vimmite-install-ai-app chatgpt status || true
+    /usr/libexec/vimmite-install-ai-app claude status || true
+    /usr/libexec/vimmite-install-ai-app comfyui status || true
+    if command -v podman >/dev/null 2>&1; then
+        podman ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' \
+            --filter name='vimmite-dev' --filter name='strix-halo' || true
+    fi
+}
+
+menu() {
+    local choice
+    [[ -t 0 ]] || { echo "The AI menu requires an interactive terminal." >&2; return 1; }
+    while true; do
+        clear 2>/dev/null || true
+        printf 'Vimmite AI\n\n'
+        choice="$(choose "Choose an AI task" \
+            "Install or manage AI tools" \
+            "Update all AI software" \
+            "Open RamaLama local-model manager" \
+            "Open Strix Halo llama.cpp manager" \
+            "Open Strix Halo GPU ComfyUI manager" \
+            "Show AI status" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Install or manage AI tools") install_menu ;;
+            "Update all AI software") /usr/libexec/vimmite-ai-update menu ;;
+            "Open RamaLama local-model manager") /usr/libexec/vimmite-ramalama ;;
+            "Open Strix Halo llama.cpp manager") /usr/libexec/vimmite-strix-halo-ai ;;
+            "Open Strix Halo GPU ComfyUI manager") /usr/libexec/vimmite-strix-halo-comfyui ;;
+            "Show AI status") status_menu; pause_menu ;;
+            "Back") return 0 ;;
+        esac
+    done
+}
+
+case "${1:-menu}" in
+    menu) menu ;;
+    install) install_menu ;;
+    update) /usr/libexec/vimmite-ai-update "${@:2}" ;;
+    status) status_menu ;;
+    help|-h|--help) echo "Usage: ujust ai [menu|install|update|status]" ;;
+    *) echo "Unknown AI action: $1" >&2; exit 2 ;;
+esac

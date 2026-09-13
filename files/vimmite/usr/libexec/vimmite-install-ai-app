@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly DEV_BOX="vimmite-dev"
+readonly CACHE_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/vimmite-ai"
+readonly COMFY_BASE="${HOME}/.local/share/vimmite-comfyui"
+COMFY_ROOT="${COMFY_BASE}/host"
+COMFY_SOURCE="${COMFY_ROOT}/ComfyUI"
+COMFY_VENV="${COMFY_ROOT}/venv"
+readonly COMFY_MARKER="${COMFY_BASE}/install-target"
+
+comfy_paths() {
+    COMFY_ROOT="${COMFY_BASE}/$1"
+    COMFY_SOURCE="${COMFY_ROOT}/ComfyUI"
+    COMFY_VENV="${COMFY_ROOT}/venv"
+}
+readonly COMFY_REPOSITORY="https://github.com/comfyanonymous/ComfyUI.git"
+readonly CLAUDE_REPO_URL="https://pkg.claude-desktop-debian.dev/rpm/claude-desktop-unofficial.repo"
+readonly CHATGPT_RPM_BASE="https://persistent.oaistatic.com/codex-app-prod/linux/rpm/latest"
+
+if (( EUID == 0 )); then
+    echo "Run AI app setup as your regular desktop user, not root." >&2
+    exit 1
+fi
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+pause_menu() {
+    [[ -t 0 ]] || return 0
+    read -r -p "Press Enter to return to the menu..." _ || true
+}
+
+choose() {
+    local prompt="$1"
+    shift
+    local selection
+    if command -v ugum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        ugum choose "$@"
+    elif command -v gum >/dev/null 2>&1 && [[ -t 0 ]]; then
+        gum choose --header "${prompt}" "$@"
+    else
+        printf '\n%s\n' "${prompt}" >&2
+        select selection in "$@"; do
+            [[ -n "${selection}" ]] && { printf '%s\n' "${selection}"; return 0; }
+            echo "Choose a number from the list." >&2
+        done
+        return 1
+    fi
+}
+
+target_menu() {
+    local app="$1" choice
+    choice="$(choose "Where should ${app} be installed?" \
+        "Distrobox container: vimmite-dev (recommended)" \
+        "Host installation" \
+        "Back")" || return 1
+    case "${choice}" in
+        "Distrobox container"*) printf 'container\n' ;;
+        "Host installation") printf 'host\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+devbox_exists() {
+    command -v podman >/dev/null 2>&1 && podman container exists "${DEV_BOX}" >/dev/null 2>&1
+}
+
+ensure_devbox() {
+    if devbox_exists; then
+        return 0
+    fi
+    [[ -t 0 ]] || die "${DEV_BOX} is not installed. Run 'ujust vimmite-dev create' first."
+    echo "The ${DEV_BOX} container is not installed. It is the default isolated target for AI apps."
+    read -r -p "Create it now? [Y/n] " answer
+    if [[ -n "${answer}" && ! "${answer}" =~ ^[Yy]$ ]]; then
+        die "No container was selected. Choose Host installation or create ${DEV_BOX} and retry."
+    fi
+    /usr/libexec/vimmite-devbox create
+    devbox_exists || die "${DEV_BOX} was not created successfully."
+}
+
+box_exec() {
+    distrobox enter --name "${DEV_BOX}" --no-tty -- "$@"
+}
+
+box_shell() {
+    distrobox enter --name "${DEV_BOX}" --no-tty -- bash -s
+}
+
+require_commands() {
+    local command_name missing=0
+    for command_name in "$@"; do
+        if ! command -v "${command_name}" >/dev/null 2>&1; then
+            warn "Required command is missing: ${command_name}"
+            missing=1
+        fi
+    done
+    (( missing == 0 )) || return 1
+}
+
+chatgpt_rpm_name() {
+    case "$(uname -m)" in
+        x86_64) printf 'chatgpt.x86_64.rpm\n' ;;
+        aarch64|arm64) printf 'chatgpt.aarch64.rpm\n' ;;
+        *) die "ChatGPT Desktop does not publish an RPM for $(uname -m)." ;;
+    esac
+}
+
+download_chatgpt() {
+    local destination
+    destination="${CACHE_ROOT}/$(chatgpt_rpm_name)"
+    mkdir -p "${CACHE_ROOT}"
+    log "Downloading the current ChatGPT Desktop RPM ..." >&2
+    curl --fail --location --retry 3 --output "${destination}.new" \
+        "${CHATGPT_RPM_BASE}/$(basename "${destination}")" || { rm -f -- "${destination}.new"; return 1; }
+    mv -f -- "${destination}.new" "${destination}" || return 1
+    printf '%s\n' "${destination}"
+}
+
+install_chatgpt_host() {
+    require_commands curl || die "curl is required for ChatGPT Desktop setup."
+    local package
+    package="$(download_chatgpt)" || return 1
+    if command -v rpm-ostree >/dev/null 2>&1; then
+        log "Layering ChatGPT Desktop into the next Atomic deployment ..."
+        sudo rpm-ostree install --idempotent "${package}"
+    elif command -v dnf5 >/dev/null 2>&1; then
+        sudo dnf5 install --assumeyes "${package}"
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install --assumeyes "${package}"
+    else
+        die "Neither rpm-ostree nor dnf is available for a host RPM installation."
+    fi
+    log "ChatGPT Desktop is installed on the host. Reboot if rpm-ostree scheduled a deployment."
+}
+
+install_chatgpt_container() {
+    ensure_devbox
+    require_commands curl || die "curl is required to download ChatGPT Desktop."
+    local package
+    package="$(download_chatgpt)" || return 1
+    log "Installing ChatGPT Desktop inside ${DEV_BOX} ..."
+    box_exec sudo dnf install --assumeyes "${package}"
+    box_exec distrobox-export --app chatgpt
+    log "ChatGPT Desktop was exported from ${DEV_BOX} to the host application menu."
+}
+
+install_claude_host() {
+    require_commands curl || die "curl is required for Claude Desktop setup."
+    local repo_file="${CACHE_ROOT}/claude-desktop-unofficial.repo"
+    mkdir -p "${CACHE_ROOT}"
+    curl --fail --location --retry 3 --output "${repo_file}.new" "${CLAUDE_REPO_URL}"
+    mv -f -- "${repo_file}.new" "${repo_file}"
+    sudo install -D -m 0644 "${repo_file}" /etc/yum.repos.d/claude-desktop-unofficial.repo
+    if command -v rpm-ostree >/dev/null 2>&1; then
+        sudo rpm-ostree install --idempotent claude-desktop-unofficial
+        log "Claude Desktop is scheduled in the next Atomic deployment."
+    elif command -v dnf5 >/dev/null 2>&1; then
+        sudo dnf5 install --assumeyes claude-desktop-unofficial
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install --assumeyes claude-desktop-unofficial
+    else
+        die "Neither rpm-ostree nor dnf is available for a host RPM installation."
+    fi
+}
+
+install_claude_container() {
+    ensure_devbox
+    log "Installing Claude Desktop inside ${DEV_BOX} ..."
+    box_shell <<'EOF'
+set -euo pipefail
+repo_file="$(mktemp)"
+trap 'rm -f -- "${repo_file}"' EXIT
+curl --fail --location --retry 3 https://pkg.claude-desktop-debian.dev/rpm/claude-desktop-unofficial.repo -o "${repo_file}"
+sudo install -D -m 0644 "${repo_file}" /etc/yum.repos.d/claude-desktop-unofficial.repo
+sudo dnf install --assumeyes claude-desktop-unofficial
+desktop_file="$(rpm -ql claude-desktop-unofficial | awk '/\.desktop$/ {print; exit}')"
+[[ -n "${desktop_file}" ]] || { echo "Claude Desktop installed, but no desktop file was found." >&2; exit 1; }
+distrobox-export --app "$(basename "${desktop_file}" .desktop)"
+EOF
+    log "Claude Desktop was exported from ${DEV_BOX} to the host application menu."
+}
+
+comfy_install_host() {
+    require_commands git python3 || die "git and python3 are required for host ComfyUI setup."
+    mkdir -p "${COMFY_ROOT}"
+    if [[ -d "${COMFY_SOURCE}/.git" ]]; then
+        git -C "${COMFY_SOURCE}" pull --ff-only
+    else
+        git clone --depth 1 "${COMFY_REPOSITORY}" "${COMFY_SOURCE}"
+    fi
+    if [[ ! -x "${COMFY_VENV}/bin/python" ]]; then
+        python3 -m venv "${COMFY_VENV}"
+    fi
+    "${COMFY_VENV}/bin/python" -m pip install --upgrade pip
+    "${COMFY_VENV}/bin/python" -m pip install --upgrade -r "${COMFY_SOURCE}/requirements.txt"
+}
+
+comfy_install_container() {
+    ensure_devbox
+    box_shell <<'EOF'
+set -euo pipefail
+comfy_root="${HOME}/.local/share/vimmite-comfyui/container"
+comfy_source="${comfy_root}/ComfyUI"
+comfy_venv="${comfy_root}/venv"
+mkdir -p "${comfy_root}"
+if [[ -d "${comfy_source}/.git" ]]; then
+    git -C "${comfy_source}" pull --ff-only
+else
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "${comfy_source}"
+fi
+if [[ ! -x "${comfy_venv}/bin/python" ]]; then
+    python3 -m venv "${comfy_venv}"
+fi
+"${comfy_venv}/bin/python" -m pip install --upgrade pip
+"${comfy_venv}/bin/python" -m pip install --upgrade -r "${comfy_source}/requirements.txt"
+EOF
+}
+
+write_comfy_launcher() {
+    mkdir -p "${HOME}/.local/bin"
+    cat > "${HOME}/.local/bin/vimmite-comfyui" <<'EOF'
+#!/usr/bin/env bash
+exec /usr/libexec/vimmite-install-ai-app comfyui launch "$@"
+EOF
+    chmod 0755 "${HOME}/.local/bin/vimmite-comfyui"
+    log "ComfyUI launcher: ${HOME}/.local/bin/vimmite-comfyui"
+}
+
+install_comfyui() {
+    local target="$1"
+    comfy_paths "${target}"
+    if [[ "${target}" == host ]]; then
+        comfy_install_host
+    else
+        comfy_install_container
+    fi
+    mkdir -p "${COMFY_ROOT}"
+    printf '%s\n' "${target}" > "${COMFY_MARKER}"
+    touch "${COMFY_ROOT}/installed"
+    write_comfy_launcher
+    log "ComfyUI is ready. Launch it with: vimmite-comfyui"
+    log "This generic path uses CPU/default PyTorch settings; use the Strix Halo ComfyUI manager for the tuned GPU images."
+}
+
+update_comfyui() {
+    local target
+    if [[ -d "${COMFY_BASE}/ComfyUI" ]]; then
+        warn "An older shared ComfyUI tree is retained at ${COMFY_BASE}/ComfyUI. Reinstall each desired target to create isolated environments."
+    fi
+    for target in host container; do
+        comfy_paths "${target}"
+        [[ -f "${COMFY_ROOT}/installed" ]] || continue
+        log "Updating ComfyUI (${target}) ..."
+        if [[ "${target}" == host ]]; then
+            comfy_install_host
+        else
+            comfy_install_container
+        fi
+    done
+    log "ComfyUI updates finished."
+
+}
+
+launch_comfyui() {
+    local target
+    if [[ "${1:-}" == host || "${1:-}" == container ]]; then
+        target="$1"
+        shift
+    else
+        [[ -f "${COMFY_MARKER}" ]] || die "ComfyUI is not installed; choose Install first."
+        target="$(<"${COMFY_MARKER}")"
+    fi
+    comfy_paths "${target}"
+    [[ -f "${COMFY_ROOT}/installed" ]] || die "Install ComfyUI for ${target} first; older shared environments are retained but must be reinstalled into the isolated target."
+    case "${target}" in
+        host) exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 "$@" ;;
+        container) ensure_devbox; box_exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 "$@" ;;
+        *) die "Unknown ComfyUI install target: ${target}" ;;
+    esac
+}
+
+status_app() {
+    local app="$1"
+    case "${app}" in
+        chatgpt)
+            rpm -q chatgpt 2>/dev/null || true
+            if devbox_exists; then box_exec rpm -q chatgpt 2>/dev/null || true; fi
+            ;;
+        claude)
+            rpm -q claude-desktop-unofficial 2>/dev/null || true
+            if devbox_exists; then box_exec rpm -q claude-desktop-unofficial 2>/dev/null || true; fi
+            ;;
+        comfyui)
+            if [[ -f "${COMFY_MARKER}" ]]; then
+                log "Target: $(<"${COMFY_MARKER}")"
+                comfy_paths "$(<"${COMFY_MARKER}")"
+                log "Source: ${COMFY_SOURCE}"
+                [[ -x "${COMFY_VENV}/bin/python" ]] && log "Python environment: ready" || warn "Python environment: missing"
+            else
+                log "ComfyUI: not installed"
+            fi
+            ;;
+        *) die "Unknown AI app: ${app}" ;;
+    esac
+}
+
+install_menu() {
+    local app="$1" target
+    target="$(target_menu "${app}")" || return 0
+    case "${app}:${target}" in
+        chatgpt:host) install_chatgpt_host ;;
+        chatgpt:container) install_chatgpt_container ;;
+        claude:host) install_claude_host ;;
+        claude:container) install_claude_container ;;
+        comfyui:host|comfyui:container) install_comfyui "${target}" ;;
+        *) die "Unknown AI app target: ${app}:${target}" ;;
+    esac
+}
+
+usage() {
+    cat <<'EOF'
+Usage: vimmite-install-ai-app [chatgpt|claude|comfyui] [menu|host|container|update|launch|status]
+
+The interactive menu offers Host installation or the vimmite-dev Distrobox.
+EOF
+}
+
+app="${1:-}"
+action="${2:-menu}"
+case "${app}" in
+    chatgpt|claude)
+        case "${action}" in
+            menu) install_menu "${app}" ;;
+            host) install_"${app}"_host ;;
+            container) install_"${app}"_container ;;
+            update) status_app "${app}"; log "Use 'ujust ai-update' to update installed desktop packages." ;;
+            status) status_app "${app}" ;;
+            *) usage >&2; exit 2 ;;
+        esac
+        ;;
+    comfyui)
+        case "${action}" in
+            menu) install_menu comfyui ;;
+            host|container) install_comfyui "${action}" ;;
+            update) update_comfyui ;;
+            launch) launch_comfyui "${@:3}" ;;
+            status) status_app comfyui ;;
+            *) usage >&2; exit 2 ;;
+        esac
+        ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac
