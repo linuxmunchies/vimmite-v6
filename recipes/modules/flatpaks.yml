@@ -10,6 +10,7 @@ configurations:
     install:
       # Browsers and application discovery
       - com.brave.Browser
+      - io.github.ungoogled_software.ungoogled_chromium
       - io.github.kolunmi.Bazaar
 
       # Productivity and communication
@@ -47,6 +48,7 @@ configurations:
       - it.mijorus.gearlever
       - com.github.zocker_160.SyncThingy
       - org.filezillaproject.Filezilla
+      - com.vscodium.codium
 
   # Keep a user Flathub remote for optional applications without showing a
   # misleading "installed 0 user Flatpaks" notification after every login.
