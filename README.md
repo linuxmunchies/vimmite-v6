@@ -54,10 +54,13 @@ After booting, connect to the network so application setup can finish, then run:
 ```bash
 ujust vimmite-setup
 ujust vimmite-doctor
+ujust ai
 ```
 
-The setup menu offers optional features and their undo commands. Browse the
-remaining commands with `ujust --choose`. If something fails, run
+The setup menu offers optional features and their undo commands. `ujust ai`
+is the single entry point for AI tools, desktop apps, ComfyUI, local models,
+and AI-specific updates. Browse the remaining commands with `ujust --choose`.
+If something fails, run
 `ujust vimmite-support-bundle` and review the generated archive before sharing it.
 
 For updates and rollback commands, see [installation and updates](docs/installation.md#updating-and-rolling-back).

@@ -13,7 +13,7 @@ Usage: ujust vimmite-dev [action]
 
   create          Build the local image if needed and assemble vimmite-dev
   build           Rebuild the local development image
-  update          Rebuild the image and replace the box; shared home is kept
+  update          Upgrade packages in place, retaining installed applications
   enter [args]    Enter the box, optionally passing a command
   status          Show image, container, integration, and version state
   doctor          Check tools, integration, and representative compilers
@@ -70,7 +70,7 @@ create_box() {
     check_host
     image_exists || build_image
     if command -v podman >/dev/null 2>&1 && box_exists; then
-        echo "${BOX_NAME} already exists. Run 'ujust vimmite-dev update' to rebuild and replace it."
+        echo "${BOX_NAME} already exists. Run 'ujust vimmite-dev update' to upgrade its packages."
     else
         distrobox assemble create --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}"
     fi
@@ -79,9 +79,9 @@ create_box() {
 
 update_box() {
     check_host
-    build_image
-    distrobox assemble create --replace --file "${ASSEMBLE_FILE}" --name "${BOX_NAME}"
-    echo "${BOX_NAME} was rebuilt. Files in the shared home directory were retained."
+    box_exists || die "create the development box first"
+    in_box sudo dnf upgrade --refresh --assumeyes
+    echo "${BOX_NAME} packages were updated; installed applications were retained."
 }
 
 status_box() {
@@ -92,7 +92,7 @@ status_box() {
     if box_exists; then
         actual_image="$(podman inspect --format '{{.ImageName}}' "${BOX_NAME}" 2>/dev/null || true)"
         printf 'Box image:  %s\n' "${actual_image:-unknown}"
-        [[ "${actual_image}" == "${IMAGE_NAME}" ]] || echo "Warning: the existing box predates or differs from this definition; run update."
+        [[ "${actual_image}" == "${IMAGE_NAME}" ]] || echo "Warning: the existing box predates or differs from this definition; see docs/development.md for explicit recreation."
     fi
     echo "Home:       shared with the host"
     echo "Versions:   project-owned through mise/uv/devcontainers"

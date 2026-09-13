@@ -7,10 +7,24 @@ if (( EUID == 0 )); then
 fi
 
 readonly user_prefix="${HOME}/.local"
+readonly dev_box="vimmite-dev"
+readonly container_home="${HOME}/.local/share/vimmite-ai/container"
+
+container_exec() {
+    mkdir -p "${container_home}"
+    distrobox enter --name "${dev_box}" --no-tty -- env \
+        HOME="${container_home}" XDG_CONFIG_HOME="${container_home}/.config" \
+        XDG_DATA_HOME="${container_home}/.local/share" XDG_CACHE_HOME="${container_home}/.cache" \
+        NPM_CONFIG_PREFIX="${container_home}/.local" \
+        CARGO_HOME="${container_home}/.cargo" RUSTUP_HOME="${container_home}/.rustup" \
+        BUN_INSTALL="${container_home}/.bun" UV_TOOL_DIR="${container_home}/.local/share/uv/tools" \
+        UV_TOOL_BIN_DIR="${container_home}/.local/bin" \
+        PATH="${container_home}/.local/bin:${container_home}/.bun/bin:${container_home}/.cargo/bin:${container_home}/.opencode/bin:${container_home}/.hermes/bin:/usr/local/bin:/usr/bin:/bin" "$@"
+}
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|hermes|menu|help]
+Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|hermes|menu|help] [host|container]
 
 Install an AI coding CLI into the current user's environment.
 EOF
@@ -41,6 +55,30 @@ choose_cli() {
     fi
 }
 
+devbox_exists() {
+    command -v podman >/dev/null 2>&1 && podman container exists "${dev_box}" >/dev/null 2>&1
+}
+
+ensure_devbox() {
+    if devbox_exists; then
+        return 0
+    fi
+    [[ -t 0 ]] || {
+        echo "${dev_box} is not installed. Run 'ujust vimmite-dev create' first." >&2
+        return 1
+    }
+    read -r -p "${dev_box} is not installed. Create it now? [Y/n] " answer
+    if [[ -n "${answer}" && ! "${answer}" =~ ^[Yy]$ ]]; then
+        echo "No container was selected." >&2
+        return 1
+    fi
+    /usr/libexec/vimmite-devbox create
+    devbox_exists || {
+        echo "${dev_box} was not created successfully." >&2
+        return 1
+    }
+}
+
 install_npm_cli() {
     local package="$1"
     local name="$2"
@@ -62,6 +100,17 @@ install_npm_cli() {
     fi
     echo "${name} installed in ${user_prefix}/bin."
     echo "If the command is not found, add ${user_prefix}/bin to PATH and open a new shell."
+}
+
+install_npm_cli_container() {
+    local package="$1"
+    local name="$2"
+    ensure_devbox || return 1
+    echo "Installing ${name} inside ${dev_box} ..."
+    container_exec bash -c \
+        'mkdir -p "$HOME/.local/bin" && npm install --global --prefix "$HOME/.local" "$1"' \
+        _ "${package}"
+    echo "${name} is available inside ${dev_box} under ${container_home}."
 }
 
 install_script_cli() {
@@ -91,34 +140,57 @@ install_script_cli() {
     )
 }
 
+install_script_cli_container() {
+    local url="$1"
+    local name="$2"
+    local shell="$3"
+    ensure_devbox || return 1
+    (
+        local installer
+        trap 'rm -f -- "${installer:-}"' EXIT
+        installer="$(mktemp)"
+        echo "Downloading ${name} installer..."
+        curl -fsSL "${url}" -o "${installer}"
+        echo "Running the ${name} installer inside ${dev_box} ..."
+        container_exec "${shell}" -s < "${installer}"
+        echo "${name} installed inside ${dev_box}."
+    )
+}
+
 install_cli() {
     local cli="$1"
+    local target="${2:-host}"
+
+    case "${target}" in
+        host|container) ;;
+        *) echo "Unknown installation target: ${target}" >&2; return 2 ;;
+    esac
 
     case "${cli}" in
         codex)
-            install_npm_cli '@openai/codex' 'Codex'
+            if [[ "${target}" == container ]]; then install_npm_cli_container '@openai/codex' 'Codex'; else install_npm_cli '@openai/codex' 'Codex'; fi
             ;;
         grok)
-            install_script_cli 'https://x.ai/cli/install.sh' 'Grok Build' bash
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://x.ai/cli/install.sh' 'Grok Build' bash; else install_script_cli 'https://x.ai/cli/install.sh' 'Grok Build' bash; fi
             ;;
         pi)
-            install_script_cli 'https://pi.dev/install.sh' 'Pi' sh
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://pi.dev/install.sh' 'Pi' sh; else install_script_cli 'https://pi.dev/install.sh' 'Pi' sh; fi
             ;;
         omp)
-            install_script_cli 'https://omp.sh/install' 'Oh My Pi' sh
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://omp.sh/install' 'Oh My Pi' sh; else install_script_cli 'https://omp.sh/install' 'Oh My Pi' sh; fi
             ;;
         claude)
-            install_script_cli 'https://claude.ai/install.sh' 'Claude Code' bash
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://claude.ai/install.sh' 'Claude Code' bash; else install_script_cli 'https://claude.ai/install.sh' 'Claude Code' bash; fi
             ;;
         dsh)
-            install_npm_cli '@deepseek-ai/dsh' 'DeepSeek Harness'
+            if [[ "${target}" == container ]]; then install_npm_cli_container '@deepseek-ai/dsh' 'DeepSeek Harness'; else install_npm_cli '@deepseek-ai/dsh' 'DeepSeek Harness'; fi
             echo "Launch it with: dsh web"
             ;;
         opencode)
-            install_script_cli 'https://opencode.ai/install' 'OpenCode' bash
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://opencode.ai/install' 'OpenCode' bash; else install_script_cli 'https://opencode.ai/install' 'OpenCode' bash; fi
             ;;
         hermes)
-            install_script_cli 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash; else install_script_cli 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash; fi
             ;;
         *)
             echo "Unknown AI CLI: ${cli}" >&2
@@ -126,19 +198,29 @@ install_cli() {
             return 2
             ;;
     esac
+    if [[ "${target}" == container ]]; then
+        mkdir -p "${container_home}/installed" "${HOME}/.local/bin"
+        touch "${container_home}/installed/${cli}"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'exec /usr/libexec/vimmite-install-ai-cli run-container %q "$@"\n' "${cli}"
+        } > "${HOME}/.local/bin/${cli}-container"
+        chmod 0755 "${HOME}/.local/bin/${cli}-container"
+        echo "Launch with: ${cli}-container"
+    fi
 }
 
 menu() {
     local selection
     local -a choices=(
-        'Install Codex'
-        'Install Grok Build'
-        'Install Pi'
-        'Install OMP (Oh My Pi)'
-        'Install Claude Code'
-        'Install DSH (DeepSeek Harness)'
-        'Install OpenCode'
-        'Install Hermes Agent'
+        'Install or update Codex'
+        'Install or update Grok Build'
+        'Install or update Pi'
+        'Install or update OMP (Oh My Pi)'
+        'Install or update Claude Code'
+        'Install or update DSH (DeepSeek Harness)'
+        'Install or update OpenCode'
+        'Install or update Hermes Agent'
         'Quit'
     )
 
@@ -151,26 +233,42 @@ menu() {
     while true; do
         selection="$(choose_cli 'Install an AI CLI' "${choices[@]}")" || return 0
         case "${selection}" in
-            'Install Codex') install_cli codex || true ;;
-            'Install Grok Build') install_cli grok || true ;;
-            'Install Pi') install_cli pi || true ;;
-            'Install OMP (Oh My Pi)') install_cli omp || true ;;
-            'Install Claude Code') install_cli claude || true ;;
-            'Install DSH (DeepSeek Harness)') install_cli dsh || true ;;
-            'Install OpenCode') install_cli opencode || true ;;
-            'Install Hermes Agent') install_cli hermes || true ;;
+            'Install or update Codex') install_cli_with_target codex ;;
+            'Install or update Grok Build') install_cli_with_target grok ;;
+            'Install or update Pi') install_cli_with_target pi ;;
+            'Install or update OMP (Oh My Pi)') install_cli_with_target omp ;;
+            'Install or update Claude Code') install_cli_with_target claude ;;
+            'Install or update DSH (DeepSeek Harness)') install_cli_with_target dsh ;;
+            'Install or update OpenCode') install_cli_with_target opencode ;;
+            'Install or update Hermes Agent') install_cli_with_target hermes ;;
             Quit) return 0 ;;
         esac
         pause_menu || return 0
     done
 }
 
+install_cli_with_target() {
+    local cli="$1"
+    local selection target
+    selection="$(choose_cli "Where should ${cli} be installed?" \
+        'Distrobox container: vimmite-dev (recommended)' \
+        'Host installation' \
+        'Back')" || return 0
+    case "${selection}" in
+        'Distrobox container'*) target=container ;;
+        'Host installation') target=host ;;
+        *) return 0 ;;
+    esac
+    install_cli "${cli}" "${target}"
+}
+
 case "${1:-menu}" in
+    run-container) shift; ensure_devbox; container_exec "$@" ;;
     menu) menu ;;
     help|-h|--help) usage ;;
     codex|grok|pi|omp|claude|dsh|opencode|hermes)
-        [[ $# -eq 1 ]] || { echo "Unexpected extra arguments: ${*:2}" >&2; exit 2; }
-        install_cli "$1"
+        [[ $# -le 2 ]] || { echo "Unexpected extra arguments: ${*:3}" >&2; exit 2; }
+        install_cli "$1" "${2:-host}"
         ;;
     *)
         usage >&2

@@ -22,13 +22,25 @@ vimmite-support-bundle output="":
 vimmite-dev *args:
     /usr/libexec/vimmite-devbox "$@"
 
+[doc('Open the unified AI setup, install, and update menu')]
+[group('AI')]
+ai *args:
+    /usr/libexec/vimmite-ai "$@"
+
+[doc('Update AI harnesses, ComfyUI, Distroboxes, and desktop RPMs')]
+[group('AI')]
+ai-update *args:
+    /usr/libexec/vimmite-ai-update "$@"
+
 [doc('Manage llama.cpp and ComfyUI Distroboxes for Strix Halo/gfx1151')]
 [group('Strix Halo AI')]
+[private]
 strix-halo-ai *args:
     /usr/libexec/vimmite-strix-halo-ai "$@"
 
 [doc('Manage stable and experimental ComfyUI Distroboxes for Strix Halo/gfx1151')]
 [group('Strix Halo AI')]
+[private]
 strix-halo-comfyui *args:
     /usr/libexec/vimmite-strix-halo-comfyui "$@"
 
@@ -169,10 +181,11 @@ wake-on-lan interface="" action="status":
 setup-ai-max action="status":
     /usr/libexec/vimmite-setup-ai-max "$@"
 
-# RamaLama is installed per user. The public command is `ujust ramalama`;
-# older recipe names remain as private aliases so existing scripts keep working.
+# RamaLama is installed per user. The direct command remains callable for
+# compatibility, while `ujust ai` is the discoverable entry point.
 [doc('Manage RamaLama: setup, pull from Hugging Face or the NAS, list, and run')]
 [group('RamaLama')]
+[private]
 ramalama *args:
     /usr/libexec/vimmite-ramalama "$@"
 
@@ -272,5 +285,5 @@ ramalama-run-north *prompt:
 
 [doc('Install Codex, Grok Build, Pi, Oh My Pi, Claude Code, DSH, OpenCode, or Hermes Agent')]
 [group('AI tools')]
-install-ai-cli tool="menu":
+install-ai-cli tool="menu" target="host":
     /usr/libexec/vimmite-install-ai-cli "$@"

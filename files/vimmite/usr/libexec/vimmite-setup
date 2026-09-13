@@ -2,7 +2,6 @@
 set -euo pipefail
 
 readonly DEV_BOX="vimmite-dev"
-readonly MODEL_STORE="${RAMALAMA_STORE:-${HOME}/ai/models}"
 
 green=$'\033[32m'
 yellow=$'\033[33m'
@@ -141,32 +140,7 @@ gaming_menu() {
 }
 
 ai_menu() {
-    local rama_state vulkan_state rocm_state comfy_stable_state comfy_experimental_state choice
-    [[ -x "${HOME}/.local/share/ramalama-cli/bin/ramalama" ]] && rama_state="$(enabled)" || rama_state="$(disabled)"
-    podman container exists strix-halo-vulkan >/dev/null 2>&1 && vulkan_state="$(enabled)" || vulkan_state="$(disabled)"
-    podman container exists strix-halo-rocm >/dev/null 2>&1 && rocm_state="$(enabled)" || rocm_state="$(disabled)"
-    podman container exists strix-halo-comfyui-stable >/dev/null 2>&1 && comfy_stable_state="$(enabled)" || comfy_stable_state="$(disabled)"
-    podman container exists strix-halo-comfyui-experimental >/dev/null 2>&1 && comfy_experimental_state="$(enabled)" || comfy_experimental_state="$(disabled)"
-    printf 'RamaLama Vulkan backend: %s\nStrix Halo Vulkan container: %s\nStrix Halo ROCm container: %s\nComfyUI stable container: %s\nComfyUI experimental container: %s\n' \
-        "${rama_state}" "${vulkan_state}" "${rocm_state}" "${comfy_stable_state}" "${comfy_experimental_state}"
-    echo "Model storage: ${MODEL_STORE}"
-    echo "Undo: use the Strix Halo manager's Remove action. RamaLama can be removed by deleting ~/.local/share/ramalama-cli; models remain in the store."
-    choice="$(choose "AI backend and model storage" \
-        "Install AI coding tools" \
-        "Open RamaLama manager" \
-        "Open Strix Halo local AI manager" \
-        "Create model storage directory" \
-        "Back")" || return 0
-    case "${choice}" in
-        "Install AI coding tools") run_ujust install-ai-cli ;;
-        "Open RamaLama"*) run_ujust ramalama ;;
-        "Open Strix Halo"*) run_ujust strix-halo-ai ;;
-        "Create model storage directory")
-            mkdir -p "${MODEL_STORE}"
-            echo "Model storage is ready at ${MODEL_STORE}. Undo: remove it only after confirming it contains no wanted models."
-            ;;
-    esac
-    pause
+    /usr/libexec/vimmite-ai
 }
 
 virtualization_menu() {

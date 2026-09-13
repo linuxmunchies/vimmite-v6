@@ -11,10 +11,10 @@ ujust vimmite-dev doctor
 
 `create` builds `localhost/vimmite-dev:44` from the Fedora 44 toolbox base and
 assembles the rootless `vimmite-dev` container. It is safe to rerun; use
-`update` when the definition changes and the existing container must be
-replaced. Replacement retains projects and configuration because Distrobox
-shares the normal home directory, but packages or files written only into the
-container filesystem are discarded.
+`update` to upgrade packages in place, preserving installed desktop applications.
+`build` refreshes the reusable image for future containers. Applying a changed
+container definition requires an explicit remove and create; reinstall any
+packages kept only in the old container afterward. Shared home files survive.
 
 The complete lifecycle is:
 
@@ -23,7 +23,7 @@ The complete lifecycle is:
 | Inspect current state | `ujust vimmite-dev status` |
 | Preview the assemble command | `ujust vimmite-dev manifest` |
 | Build and create | `ujust vimmite-dev create` |
-| Rebuild and replace | `ujust vimmite-dev update` |
+| Upgrade installed packages | `ujust vimmite-dev update` |
 | Enter interactively | `ujust vimmite-dev enter` |
 | Run a command | `ujust vimmite-dev enter -- rg TODO ~/dev/project` |
 | Verify tools and integration | `ujust vimmite-dev doctor` |

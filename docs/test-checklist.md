@@ -123,13 +123,16 @@ rebase.
       `start_comfy_ui` alias, and reports PyTorch GPU availability on gfx1151.
 - [ ] Stable and experimental ComfyUI launch at `http://127.0.0.1:8000`
       without a LAN listen flag and use separate persistent user directories.
-- [ ] Both channels share sentinels in `~/comfy-models`, `~/comfy-inputs`, and
+- [ ] Both channels share sentinels in `~/ai/comfy-models`, `~/comfy-inputs`, and
       `~/comfy-outputs`; refresh and removal preserve them.
 - [ ] Saved workflows and settings survive refresh below
       `~/comfy-user/<environment>`; newly named bundled workflows are seeded
       without overwriting existing files.
 - [ ] The upstream Model Manager opens for each channel and no model is
       downloaded during container creation or normal launch.
+- [ ] The ComfyUI model submenu lists every manifest bundle with an approximate
+      size, downloads with the Xet-optimized `hf` CLI, preserves destination
+      subdirectories, and keeps GLM-Image's Diffusers layout intact.
 - [ ] Diagnostics report the actual PyTorch/HIP/ROCm SDK values and ComfyUI
       revision without claiming a fixed ROCm major version.
 - [ ] Refresh requires confirmation, pulls before deleting, recreates only the

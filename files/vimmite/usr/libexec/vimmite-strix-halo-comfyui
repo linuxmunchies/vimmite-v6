@@ -6,7 +6,7 @@ readonly STABLE_CONTAINER="strix-halo-comfyui-stable"
 readonly STABLE_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:latest"
 readonly EXPERIMENTAL_CONTAINER="strix-halo-comfyui-experimental"
 readonly EXPERIMENTAL_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:dev"
-readonly MODEL_DIR="${HOME}/comfy-models"
+readonly MODEL_DIR="${HOME}/ai/comfy-models"
 readonly OUTPUT_DIR="${HOME}/comfy-outputs"
 readonly INPUT_DIR="${HOME}/comfy-inputs"
 readonly USER_ROOT="${HOME}/comfy-user"
@@ -49,6 +49,15 @@ environment_label() {
 ensure_host_data() {
     local environment="$1"
     mkdir -p "${MODEL_DIR}" "${OUTPUT_DIR}" "${INPUT_DIR}" "$(environment_user_dir "${environment}")"
+    # ComfyUI resolves a relative base_path against this configuration file.
+    # Keep upstream/legacy paths available while registering the new model root.
+    local category
+    {
+        printf 'vimmite_catalog:\n  base_path: .\n'
+        for category in checkpoints diffusion_models unet text_encoders vae loras clip_vision upscale_models latent_upscale_models diffusers; do
+            printf '  %s: %s\n' "${category}" "${category}"
+        done
+    } > "${MODEL_DIR}/.vimmite-model-paths.yaml"
 }
 
 setup_persistence() {
@@ -263,7 +272,8 @@ launch_environment() {
     log "Launching $(environment_label "${environment}") ComfyUI at ${COMFY_URL}"
     log "It is bound locally; stop it with Ctrl+C."
     exec distrobox enter --name "${container}" -- bash -lic \
-        'start_comfy_ui "$@"' _ --user-directory "${user_dir}" --input-directory "${INPUT_DIR}"
+        'start_comfy_ui "$@"' _ --user-directory "${user_dir}" --input-directory "${INPUT_DIR}" \
+        --extra-model-paths-config "${MODEL_DIR}/.vimmite-model-paths.yaml"
 }
 
 enter_environment() {
@@ -271,6 +281,186 @@ enter_environment() {
     require_environment "${environment}"
     container="$(environment_container "${environment}")"
     exec distrobox enter --name "${container}"
+}
+
+# Labels quote main-weight sizes from the supplied manifest; dependencies are
+# additional. Estimates for unspecified sizes are deliberately marked rough.
+model_catalog() {
+    cat <<'EOF'
+qwen-image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
+qwen-lightning|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
+qwen-gguf|Qwen Image 2512 Q4_K_M (~13.2 GB + dependencies)
+anima|Anima Aesthetic v1.1 (~4.18 GB + dependencies)
+ideogram|Ideogram 4 FP8 (~9.28 GB conditional + unconditional/dependencies)
+z-image|Z-Image Turbo BF16 (~12.3 GB + dependencies)
+z-patch|Z-Image Turbo distillation patch (roughly ~1 GB)
+flux-klein|FLUX.2 Klein 4B BF16 (~7.75 GB)
+flux-dev|FLUX.2 Dev FP8 Mixed (~35.5 GB + dependencies)
+glm-image|GLM-Image BF16 Diffusers directory (~35.8 GB)
+qwen-edit|Qwen Image Edit 2511 BF16 (~40.9 GB + dependencies)
+qwen-edit-lightning|Qwen Image Edit 2511 Lightning LoRA (~850 MB)
+sam|SAM 3.1 Multiplex FP16 (~1.75 GB)
+seedvr|SeedVR2 7B Sharp FP16 (~16.5 GB)
+realesrgan|RealESRGAN x4plus (~67 MB)
+realesrgan-anime|RealESRGAN x4plus anime 6B (~18 MB)
+minimax|MiniMax H3 full T2V/I2V + reference (roughly ~42 GB + dependencies)
+minimax-turbo|MiniMax H3 Turbo v4 step600 EMA LoRA (roughly ~1 GB)
+minimax-gguf|MiniMax H3 GGUF low-memory set (roughly ~25 GB + VAEs)
+ltx-dev|LTX-2.3 dev BF16 (~46.1 GB + dependencies)
+ltx-distilled|LTX-2.3 distilled 1.1 BF16 (~46.1 GB + dependencies)
+ltx-lora|LTX-2.3 distilled LoRA (roughly ~7 GB)
+ltx-upscale|LTX-2.3 spatial x2 upscaler (~996 MB)
+ltx-dev-gguf|LTX-2.3 dev Q6_K (roughly ~18 GB + dependencies)
+ltx-distilled-gguf|LTX-2.3 distilled Q6_K (roughly ~18 GB + dependencies)
+hunyuan-t2v|HunyuanVideo 1.5 T2V 720p FP16 (~16.7 GB + dependencies)
+hunyuan-i2v|HunyuanVideo 1.5 I2V 720p FP16 (~16.7 GB + dependencies)
+hunyuan-upscale|HunyuanVideo 1.5 1080p upscale set (roughly ~17 GB)
+hunyuan-lora|HunyuanVideo 1.5 acceleration LoRA (roughly ~1 GB)
+wan-t2v|Wan 2.2 T2V high + low FP16 (~57.2 GB + dependencies)
+wan-i2v|Wan 2.2 I2V high + low FP16 (~57.2 GB + dependencies)
+wan-t2v-lightning|Wan 2.2 T2V Lightning LoRA pair (roughly ~2 GB)
+wan-i2v-lightning|Wan 2.2 I2V Lightning LoRA pair (roughly ~2 GB)
+EOF
+}
+
+# Emit repo|source|destination relative to MODEL_DIR. Only the packaging prefix
+# split_files is removed by default; nested directories otherwise survive.
+model_file() {
+    printf '%s|%s|%s\n' "$1" "$2" "${3:-${2#split_files/}}"
+}
+
+qwen_dependencies() {
+    model_file Comfy-Org/Qwen-Image_ComfyUI split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+    model_file Comfy-Org/Qwen-Image_ComfyUI split_files/vae/qwen_image_vae.safetensors
+}
+
+model_manifest() {
+    local id="$1" repo file mode variant
+    case "${id}" in
+        qwen-image|qwen-edit)
+            if [[ "${id}" == qwen-image ]]; then
+                model_file Comfy-Org/Qwen-Image_ComfyUI split_files/diffusion_models/qwen_image_2512_bf16.safetensors
+            else
+                model_file Comfy-Org/Qwen-Image-Edit_ComfyUI split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors
+            fi
+            qwen_dependencies ;;
+        qwen-lightning|qwen-edit-lightning)
+            repo=Qwen-Image-2512-Lightning
+            [[ "${id}" != qwen-edit-lightning ]] || repo=Qwen-Image-Edit-2511-Lightning
+            file="${repo}-4steps-V1.0-bf16.safetensors"
+            model_file "lightx2v/${repo}" "${file}" "loras/${file}" ;;
+        qwen-gguf)
+            model_file unsloth/Qwen-Image-2512-GGUF qwen-image-2512-Q4_K_M.gguf unet/qwen-image-2512-Q4_K_M.gguf
+            model_file unsloth/Qwen2.5-VL-7B-Instruct-GGUF Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf
+            model_file unsloth/Qwen2.5-VL-7B-Instruct-GGUF mmproj-BF16.gguf text_encoders/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf
+            model_file Comfy-Org/Qwen-Image_ComfyUI split_files/vae/qwen_image_vae.safetensors ;;
+        anima)
+            model_file circlestone-labs/Anima split_files/diffusion_models/anima-aesthetic-v1.1.safetensors
+            model_file circlestone-labs/Anima split_files/text_encoders/qwen_3_06b_base.safetensors
+            model_file Comfy-Org/Qwen-Image_ComfyUI split_files/vae/qwen_image_vae.safetensors ;;
+        ideogram)
+            for file in diffusion_models/ideogram4_fp8_scaled.safetensors diffusion_models/ideogram4_unconditional_fp8_scaled.safetensors text_encoders/qwen3vl_8b_fp8_scaled.safetensors vae/flux2-vae.safetensors; do
+                model_file Comfy-Org/Ideogram-4 "${file}"
+            done ;;
+        z-image)
+            for file in diffusion_models/z_image_turbo_bf16.safetensors text_encoders/qwen_3_4b.safetensors vae/ae.safetensors; do
+                model_file Comfy-Org/z_image_turbo "split_files/${file}"
+            done ;;
+        z-patch) model_file Comfy-Org/z_image_turbo split_files/loras/z_image_turbo_distill_patch_lora_bf16.safetensors ;;
+        flux-klein) model_file black-forest-labs/FLUX.2-klein-4B flux-2-klein-4b.safetensors diffusion_models/flux-2-klein-4b.safetensors ;;
+        flux-dev)
+            for file in diffusion_models/flux2_dev_fp8mixed.safetensors text_encoders/mistral_3_small_flux2_bf16.safetensors vae/flux2-vae.safetensors; do
+                model_file Comfy-Org/flux2-dev "split_files/${file}"
+            done ;;
+        glm-image) model_file zai-org/GLM-Image '*' diffusers/GLM-Image ;;
+        sam) model_file Comfy-Org/sam3.1 checkpoints/sam3.1_multiplex_fp16.safetensors ;;
+        seedvr) model_file Comfy-Org/SeedVR2 diffusion_models/seedvr2_7b_sharp_fp16.safetensors ;;
+        realesrgan|realesrgan-anime)
+            file=RealESRGAN_x4plus.pth; variant=v0.1.0
+            if [[ "${id}" == realesrgan-anime ]]; then file=RealESRGAN_x4plus_anime_6B.pth; variant=v0.2.2.4; fi
+            model_file "https://github.com/xinntao/Real-ESRGAN/releases/download/${variant}/${file}" - "upscale_models/${file}" ;;
+        minimax|minimax-gguf)
+            if [[ "${id}" == minimax ]]; then
+                for file in diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors; do model_file Comfy-Org/MiniMax-H3 "${file}"; done
+            else
+                model_file unsloth/MiniMax-H3-GGUF qwen3vl_32b_minimax_h3-Q2_K_M.gguf text_encoders/qwen3vl_32b_minimax_h3-Q2_K_M.gguf
+                for file in minimax_h3_fl2va_pruned-UD-Q2_K_XL.gguf minimax_h3_ref2va_pruned-Q2_K.gguf; do model_file unsloth/MiniMax-H3-GGUF "${file}" "unet/${file}"; done
+            fi
+            model_file Comfy-Org/MiniMax-H3 vae/minimax_h3_video_vae_fp16.safetensors
+            model_file Comfy-Org/MiniMax-H3 vae/minimax_h3_audio_vae_fp32.safetensors ;;
+        minimax-turbo) model_file larryvrh/MiniMax-H3-Turbo-Lora minimax_h3_turbo_v4_step600_ema.safetensors loras/minimax_h3_turbo_v4_step600_ema.safetensors ;;
+        ltx-dev|ltx-distilled|ltx-dev-gguf|ltx-distilled-gguf)
+            case "${id}" in
+                ltx-dev) model_file Lightricks/LTX-2.3 ltx-2.3-22b-dev.safetensors checkpoints/ltx-2.3-22b-dev.safetensors ;;
+                ltx-distilled) model_file Lightricks/LTX-2.3 ltx-2.3-22b-distilled-1.1.safetensors checkpoints/ltx-2.3-22b-distilled-1.1.safetensors ;;
+                ltx-dev-gguf) model_file unsloth/LTX-2.3-GGUF ltx-2.3-22b-dev-Q6_K.gguf unet/ltx-2.3-22b-dev-Q6_K.gguf ;;
+                ltx-distilled-gguf) model_file unsloth/LTX-2.3-GGUF distilled/ltx-2.3-22b-distilled-Q6_K.gguf unet/ltx-2.3-22b-distilled-Q6_K.gguf ;;
+            esac
+            model_file Comfy-Org/ltx-2 split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
+            model_manifest ltx-upscale ;;
+        ltx-lora) model_file Comfy-Org/ltx-2.3 split_files/loras/ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors ;;
+        ltx-upscale) model_file Lightricks/LTX-2.3 ltx-2.3-spatial-upscaler-x2-1.1.safetensors latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors ;;
+        hunyuan-t2v|hunyuan-i2v)
+            repo=Comfy-Org/HunyuanVideo_1.5_repackaged
+            mode="${id#hunyuan-}"
+            model_file "${repo}" "split_files/diffusion_models/hunyuanvideo1.5_720p_${mode}_fp16.safetensors"
+            for file in text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors text_encoders/byt5_small_glyphxl_fp16.safetensors vae/hunyuanvideo15_vae_fp16.safetensors; do model_file "${repo}" "split_files/${file}"; done
+            if [[ "${mode}" == i2v ]]; then model_file Comfy-Org/sigclip_vision_384 sigclip_vision_patch14_384.safetensors clip_vision/sigclip_vision_patch14_384.safetensors; fi ;;
+        hunyuan-upscale)
+            model_file Comfy-Org/HunyuanVideo_1.5_repackaged split_files/diffusion_models/hunyuanvideo1.5_1080p_sr_distilled_fp16.safetensors
+            model_file Comfy-Org/HunyuanVideo_1.5_repackaged split_files/latent_upscale_models/hunyuanvideo15_latent_upsampler_1080p.safetensors ;;
+        hunyuan-lora) model_file Comfy-Org/HunyuanVideo_1.5_repackaged split_files/loras/hunyuanvideo1.5_t2v_480p_lightx2v_4step_lora_rank_32_bf16.safetensors ;;
+        wan-t2v|wan-i2v)
+            repo=Comfy-Org/Wan_2.2_ComfyUI_Repackaged; mode="${id#wan-}"
+            for variant in high low; do model_file "${repo}" "split_files/diffusion_models/wan2.2_${mode}_${variant}_noise_14B_fp16.safetensors"; done
+            model_file "${repo}" split_files/text_encoders/umt5_xxl_fp16.safetensors
+            model_file "${repo}" split_files/vae/wan_2.1_vae.safetensors ;;
+        wan-t2v-lightning|wan-i2v-lightning)
+            if [[ "${id}" == wan-t2v-lightning ]]; then mode=Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0; else mode=Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1; fi
+            for variant in high low; do model_file lightx2v/Wan2.2-Lightning "${mode}/${variant}_noise_model.safetensors" "loras/${mode}/${variant}_noise_model.safetensors"; done ;;
+        *) warn "Unknown model ID: ${id}. Use list-models."; return 2 ;;
+    esac
+}
+
+download_model() {
+    local manifest repo source destination cached
+    manifest="$(model_manifest "$1")" || return $?
+    # hf keeps its resumable cache; copying to an adjacent partial file prevents
+    # an interrupted copy from exposing incomplete weights to ComfyUI.
+    while IFS='|' read -r repo source destination; do
+        destination="${MODEL_DIR}/${destination}"
+        mkdir -p -- "$(dirname -- "${destination}")" || return 1
+        log "Downloading ${repo} ${source} -> ${destination}"
+        if [[ "${repo}" == https://* ]]; then
+            command -v curl >/dev/null 2>&1 || { warn 'curl is required for the official RealESRGAN releases.'; return 1; }
+            curl --fail --location --retry 3 --output "${destination}.partial" "${repo}" || return 1
+            mv -f -- "${destination}.partial" "${destination}" || return 1
+        else
+            command -v hf >/dev/null 2>&1 || { warn 'hf is required on the host. Install the Hugging Face CLI, then retry (hf auth login for gated repositories).'; return 1; }
+            if [[ "${source}" == '*' ]]; then
+                HF_XET_HIGH_PERFORMANCE=1 hf download "${repo}" --local-dir "${destination}" || return 1
+            else
+                cached="$(HF_XET_HIGH_PERFORMANCE=1 hf download "${repo}" "${source}")" || return 1
+                [[ -f "${cached}" ]] || { warn "hf did not return a downloaded file: ${cached}"; return 1; }
+                cp --reflink=auto -- "${cached}" "${destination}.partial" || return 1
+                mv -f -- "${destination}.partial" "${destination}" || return 1
+            fi
+        fi
+    done <<<"${manifest}"
+    log "Download complete: $1"
+}
+
+download_model_menu() {
+    local id label choice
+    local -a options=()
+    [[ -t 0 ]] || { warn 'Use list-models, model-files ID, or download-model ID without a terminal.'; return 1; }
+    while IFS='|' read -r id label; do options+=("${id}: ${label}"); done < <(model_catalog)
+    while true; do
+        choice="$(choose "ComfyUI downloads -> ${MODEL_DIR} (sizes approximate; dependencies extra)" "${options[@]}" Back)" || return 0
+        [[ -n "${choice}" && "${choice}" != Back ]] || return 0
+        if ! download_model "${choice%%:*}"; then warn 'Download failed; retry to reuse the Hugging Face cache.'; fi
+        pause_menu || return 0
+    done
 }
 
 model_manager() {
@@ -387,11 +577,21 @@ Direct commands:
   ujust strix-halo-comfyui -- shell [stable|experimental]
   ujust strix-halo-comfyui -- update [stable|experimental|both]
   ujust strix-halo-comfyui -- models [stable|experimental]
+  ujust strix-halo-comfyui -- download-models
+  ujust strix-halo-comfyui -- list-models
+  ujust strix-halo-comfyui -- model-files MODEL_ID
+  ujust strix-halo-comfyui -- download-model MODEL_ID
   ujust strix-halo-comfyui -- status [stable|experimental|both]
   ujust strix-halo-comfyui -- remove [stable|experimental|both]
   ujust strix-halo-comfyui -- diagnostics
 
 Documentation: https://github.com/linuxmunchies/vimmite-v6/blob/main/docs/strix-halo-comfyui.md
+
+Catalog downloads use the host hf CLI and its resumable cache (extra disk space
+may be needed). RealESRGAN uses curl for official GitHub release assets.
+Optional LoRAs are separate choices and require their base models. Sizes are
+approximate main weights, not disk-space guarantees; rough estimates are marked.
+Existing ~/comfy-models contents are not moved automatically.
 EOF
 }
 
@@ -452,6 +652,7 @@ menu() {
         choice="$(choose "Strix Halo image generation / ComfyUI" \
             "Stable (recommended)" \
             "Experimental (upstream dev)" \
+            "Download ComfyUI models" \
             "Shared data locations" \
             "Diagnostics" \
             "Help" \
@@ -459,6 +660,7 @@ menu() {
         case "${choice}" in
             "Stable"*) environment_menu stable ;;
             "Experimental"*) environment_menu experimental ;;
+            "Download ComfyUI models") download_model_menu ;;
             "Shared data locations")
                 log "Models: ${MODEL_DIR}"
                 log "Inputs: ${INPUT_DIR}"
@@ -488,6 +690,8 @@ run_for_target() {
 usage() {
     cat <<'EOF'
 Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|update|models|status|remove|diagnostics|help] [stable|experimental|both]
+       vimmite-strix-halo-comfyui [download-models|list-models]
+       vimmite-strix-halo-comfyui [model-files|download-model] MODEL_ID
 EOF
 }
 
@@ -495,6 +699,12 @@ main() {
     local action="${1:-menu}" target="${2:-stable}"
     case "${action}" in
         menu) menu ;;
+        download-models) download_model_menu ;;
+        list-models) model_catalog ;;
+        model-files|download-model)
+            [[ $# == 2 && -n "${2}" ]] || { usage >&2; return 2; }
+            if [[ "${action}" == model-files ]]; then model_manifest "$2"; else download_model "$2"; fi
+            ;;
         install|update|remove)
             [[ "${target}" =~ ^(stable|experimental|both)$ ]] || { usage >&2; exit 2; }
             if [[ "${action}" == install ]]; then action=create; fi

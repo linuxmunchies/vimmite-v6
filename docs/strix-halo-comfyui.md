@@ -54,9 +54,13 @@ Advanced users can choose **Enter shell** to inspect the stack or run ComfyUI
 manually. Binding it to a non-loopback address exposes an unauthenticated web
 application unless the user adds suitable network and access controls.
 
-Choose **Open Model Manager** to run upstream's `model_manager`. Downloads are
-explicit and go to the shared model tree; installing or launching an environment
-never downloads a large model automatically.
+Choose **Download ComfyUI models** for Vimmite's curated model submenu. Each
+entry shows its approximate payload size and downloads with the Hugging Face
+CLI into the shared model tree. Required dependencies are included with the
+corresponding bundle where the manifest specifies them, and GLM-Image remains a
+Diffusers directory rather than being flattened. **Open Model Manager** still
+runs upstream's `model_manager` for other explicit downloads. Installing or
+launching an environment never downloads a large model automatically.
 
 Direct commands are also available:
 
@@ -75,11 +79,15 @@ Distrobox shares the host home directory. Vimmite prepares these paths:
 
 | Path | Purpose | Shared between channels? |
 | --- | --- | --- |
-| `~/comfy-models` | Checkpoints, text encoders, VAEs, diffusion models, UNets, LoRAs, and vision models | Yes |
+| `~/ai/comfy-models` | Checkpoints, text encoders, VAEs, diffusion models, UNets, LoRAs, and vision models | Yes |
 | `~/comfy-inputs` | User inputs and uploads | Yes |
 | `~/comfy-outputs` | Generated images and videos | Yes |
 | `~/comfy-user/stable` | Stable workflows, settings, and user database | No |
 | `~/comfy-user/experimental` | Experimental workflows, settings, and user database | No |
+
+The model downloader uses `HF_XET_HIGH_PERFORMANCE=1 hf download` and stores
+files under the destination subdirectories listed in the model menu. Existing
+complete files are reused when possible, while incomplete downloads can resume.
 
 Separating the two user directories prevents an experimental UI or database
 change from overwriting stable settings. Vimmite seeds upstream's bundled UI

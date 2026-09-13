@@ -170,9 +170,9 @@ update_backend() {
     have_container "${container}" || die "${container} is not installed; choose Install instead."
 
     mkdir -p "${MODEL_ROOT}"
+    podman pull "${image}" || return $?
     log "Removing ${container}; ${MODEL_ROOT} will not be touched."
     distrobox rm --force "${container}"
-    podman pull "${image}"
     distrobox create \
         --name "${container}" \
         --image "${image}" \
