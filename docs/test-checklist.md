@@ -119,12 +119,16 @@ rebase.
       containers can coexist and normal launch does not pull either tag.
 - [ ] Both ComfyUI containers receive `/dev/dri`, `/dev/kfd`, `keep-groups`,
       and unconfined seccomp through rootless Podman.
-- [ ] Install/create reruns `/opt/set_extra_paths.sh`, finds the upstream
-      `start_comfy_ui` alias, and reports PyTorch GPU availability on gfx1151.
+- [ ] Install/create verifies the upstream path helper and `start_comfy_ui`
+      alias, writes the model mapping for `~/ai/comfy-models`, and reports
+      PyTorch GPU availability on gfx1151.
 - [ ] Stable and experimental ComfyUI launch at `http://127.0.0.1:8000`
       without a LAN listen flag and use separate persistent user directories.
 - [ ] Both channels share sentinels in `~/ai/comfy-models`, `~/comfy-inputs`, and
       `~/comfy-outputs`; refresh and removal preserve them.
+- [ ] ComfyUI model downloads offer separate Hugging Face and NAS sources;
+      NAS pulls validate required remote files and place them in the catalog
+      folders under `~/ai/comfy-models`.
 - [ ] Saved workflows and settings survive refresh below
       `~/comfy-user/<environment>`; newly named bundled workflows are seeded
       without overwriting existing files.

@@ -469,6 +469,7 @@ Server: http://127.0.0.1:8080/v1 (unless --host/--port are supplied)
 Stop router: ujust strix-halo-ai -- stop [vulkan|rocm|both]
 Llama version: ujust strix-halo-ai -- version [vulkan|rocm|both]
 ComfyUI: ujust strix-halo-comfyui
+ComfyUI models: ujust strix-halo-comfyui -- download-models
 
 The containers share the host HOME, so toolbox update/removal never removes
 models. Rootless Podman receives host supplementary groups with
@@ -511,20 +512,21 @@ menu() {
         '1. Install Vulkan RADV'
         '2. Install ROCm'
         '3. Install both'
-        '4. Download recommended models'
-        '5. Update/recreate Vulkan'
-        '6. Update/recreate ROCm'
-        '7. Update/recreate both'
-        '8. Verify/test installation'
-        '9. Remove Vulkan'
-        '10. Remove ROCm'
-        '11. Remove both'
-        '12. Stop running router(s)'
-        '13. Check installed llama version(s)'
-        '14. Show configuration/help'
-        '15. Install AI coding tools'
-        '16. Manage ComfyUI image generation'
-        '17. Exit'
+        '4. Download recommended LLM models'
+        '5. Download ComfyUI models'
+        '6. Update/recreate Vulkan'
+        '7. Update/recreate ROCm'
+        '8. Update/recreate both'
+        '9. Verify/test installation'
+        '10. Remove Vulkan'
+        '11. Remove ROCm'
+        '12. Remove both'
+        '13. Stop running router(s)'
+        '14. Check installed llama version(s)'
+        '15. Show configuration/help'
+        '16. Install AI coding tools'
+        '17. Manage ComfyUI image generation'
+        '18. Exit'
     )
     local selection number
     while true; do
@@ -543,23 +545,27 @@ menu() {
             2) create_backend rocm ;;
             3) run_both create ;;
             4) download_models ;;
-            5) update_backend vulkan ;;
-            6) update_backend rocm ;;
-            7) run_both update ;;
-            8) verify_installation ;;
-            9) remove_backend vulkan ;;
-            10) remove_backend rocm ;;
-            11) run_both remove ;;
-            12) run_both stop_router ;;
-            13) run_both show_llama_version ;;
-            14) show_help ;;
-            15) /usr/libexec/vimmite-install-ai-cli ;;
-            16)
+            5)
+                [[ -x "${COMFYUI_MANAGER}" ]] || die "ComfyUI manager is missing or not executable: ${COMFYUI_MANAGER}"
+                "${COMFYUI_MANAGER}" download-models
+                ;;
+            6) update_backend vulkan ;;
+            7) update_backend rocm ;;
+            8) run_both update ;;
+            9) verify_installation ;;
+            10) remove_backend vulkan ;;
+            11) remove_backend rocm ;;
+            12) run_both remove ;;
+            13) run_both stop_router ;;
+            14) run_both show_llama_version ;;
+            15) show_help ;;
+            16) /usr/libexec/vimmite-install-ai-cli ;;
+            17)
                 [[ -x "${COMFYUI_MANAGER}" ]] || die "ComfyUI manager is missing or not executable: ${COMFYUI_MANAGER}"
                 "${COMFYUI_MANAGER}"
                 ;;
-            17) return 0 ;;
-            *) warn "Choose a number from 1 through 17." ;;
+            18) return 0 ;;
+            *) warn "Choose a number from 1 through 18." ;;
         esac
         pause_menu
     done

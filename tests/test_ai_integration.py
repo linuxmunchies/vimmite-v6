@@ -210,6 +210,122 @@ box_shell() { cat; }
         self.assertIn('comfy_source="${comfy_root}/ComfyUI"', result.stdout)
         self.assertIn('comfy_venv="${comfy_root}/venv"', result.stdout)
 
+    def test_comfy_model_catalog_lists_manifest_choices_with_sizes(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        entries = [line for line in result.stdout.splitlines() if line]
+        self.assertEqual(len(entries), 33)
+        for model_id in (
+            'qwen-image', 'qwen-gguf', 'ideogram', 'glm-image', 'qwen-edit',
+            'sam', 'realesrgan', 'minimax', 'ltx-dev', 'hunyuan-i2v',
+            'wan-i2v', 'wan-i2v-lightning',
+        ):
+            self.assertTrue(any(line.startswith(model_id + '|') for line in entries), model_id)
+        self.assertTrue(all('(' in line and ')' in line for line in entries))
+
+    def test_comfy_model_manifest_preserves_dependencies_and_diffusers_layout(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest qwen-gguf
+model_manifest glm-image
+model_manifest wan-t2v-lightning
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('unsloth/Qwen2.5-VL-7B-Instruct-GGUF|Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf|text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf', result.stdout)
+        self.assertIn('zai-org/GLM-Image|*|diffusers/GLM-Image', result.stdout)
+        self.assertIn('lightx2v/Wan2.2-Lightning|Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors|loras/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors', result.stdout)
+
+    def test_comfy_model_download_uses_new_root_and_xet_hf(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+download_model demo
+test -f "$MODEL_DIR/diffusion_models/example.safetensors"
+test ! -e "$MODEL_DIR/split_files/diffusion_models/example.safetensors"
+''', '''
+model_manifest() { printf '%s\\n' 'example/repo|split_files/diffusion_models/example.safetensors|diffusion_models/example.safetensors'; }
+hf() { :; }
+hf_download() {
+    [[ "$1" == download && "$2" == example/repo && "$3" == split_files/diffusion_models/example.safetensors ]]
+    [[ "$4" == --local-dir ]]
+    mkdir -p "$5/split_files/diffusion_models"
+    printf 'test payload\\n' > "$5/$3"
+    echo "$5/$3"
+}
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'Download complete: demo', result.stdout)
+        self.assertIn(f'{self.home}/ai/comfy-models', result.stdout)
+
+    def test_comfy_model_download_failure_propagates(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', 'download_model demo', '''
+model_manifest() { printf '%s\\n' 'example/repo|example.safetensors|checkpoints/example.safetensors'; }
+hf() { :; }
+hf_download() { return 23; }
+''')
+        self.assertEqual(result.returncode, 23)
+
+    def test_comfy_nas_download_copies_into_catalog_destination(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'nas/repo|example.safetensors|diffusion_models/example.safetensors'; }
+rclone() { :; }
+rclone_smb() {
+    case "$1" in
+        lsd) return 0 ;;
+        lsjson) printf '%s\\n' '{"IsDir":false,"Size":11}' ;;
+        copyto)
+            mkdir -p -- "$(dirname -- "$3")"
+            printf 'nas payload' > "$3"
+            ;;
+        *) return 0 ;;
+    esac
+}
+download_model_nas demo
+test -f "$MODEL_DIR/diffusion_models/example.safetensors"
+test "$(cat "$MODEL_DIR/diffusion_models/example.safetensors")" = 'nas payload'
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NAS download complete: demo', result.stdout)
+        self.assertIn(f'{self.home}/ai/comfy-models/diffusion_models/example.safetensors', result.stdout)
+
+    def test_comfy_nas_download_preserves_diffusers_directory(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'zai-org/GLM-Image|*|diffusers/GLM-Image'; }
+rclone() { :; }
+rclone_smb() {
+    case "$1" in
+        lsd) return 0 ;;
+        lsjson)
+            if [[ "$2" == */model_index.json ]]; then
+                printf '%s\\n' '{"IsDir":false,"Size":2}'
+            else
+                printf '%s\\n' '{"IsDir":true,"Size":-1}'
+            fi
+            ;;
+        copy)
+            mkdir -p -- "$3"
+            printf '{}\\n' > "$3/model_index.json"
+            ;;
+        check) return 0 ;;
+        *) return 0 ;;
+    esac
+}
+download_model_nas glm-image
+test -s "$MODEL_DIR/diffusers/GLM-Image/model_index.json"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NAS download complete: glm-image', result.stdout)
+
+    def test_comfy_download_menu_exposes_nas_source_and_overrides(self):
+        source = (LIB / 'vimmite-strix-halo-comfyui').read_text()
+        self.assertIn("source=\"$(choose 'Download source' 'Hugging Face' NAS Back)\"", source)
+        self.assertIn('download-model-nas MODEL_ID', source)
+        self.assertIn('COMFYUI_NAS_HOST', source)
+        self.assertIn('//${COMFYUI_NAS_HOST}/${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}', source)
+
+    def test_strix_menu_separates_llm_and_comfy_downloads(self):
+        source = (LIB / 'vimmite-strix-halo-ai').read_text()
+        self.assertIn("'4. Download recommended LLM models'", source)
+        self.assertIn("'5. Download ComfyUI models'", source)
+        self.assertIn('"${COMFYUI_MANAGER}" download-models', source)
+
     def test_recipe_forwards_target(self):
         recipe = (ROOT / 'files/justfiles/vimmite.just').read_text()
         self.assertIn('install-ai-cli tool="menu" target="host":\n    /usr/libexec/vimmite-install-ai-cli "$@"', recipe)

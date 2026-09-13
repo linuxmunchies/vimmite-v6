@@ -42,8 +42,8 @@ installed in each container.
 
 From an environment's menu, choose **Launch locally**. Vimmite invokes the
 upstream `start_comfy_ui` launcher, which currently supplies the changing Strix
-Halo memory and VAE workarounds. Vimmite adds only persistent input and user-data
-paths. Open:
+Halo memory and VAE workarounds. Vimmite adds persistent model, input, and
+user-data paths. Open:
 
 ```text
 http://127.0.0.1:8000
@@ -55,12 +55,15 @@ manually. Binding it to a non-loopback address exposes an unauthenticated web
 application unless the user adds suitable network and access controls.
 
 Choose **Download ComfyUI models** for Vimmite's curated model submenu. Each
-entry shows its approximate payload size and downloads with the Hugging Face
-CLI into the shared model tree. Required dependencies are included with the
-corresponding bundle where the manifest specifies them, and GLM-Image remains a
-Diffusers directory rather than being flattened. **Open Model Manager** still
-runs upstream's `model_manager` for other explicit downloads. Installing or
-launching an environment never downloads a large model automatically.
+entry shows its approximate payload size. After choosing a model, select either
+**Hugging Face** or **NAS** as the source. NAS downloads read
+`//10.1.1.5/ai/comfy-models` and copy directly into the same shared model tree;
+required files are checked before copying and file sizes are verified after
+the transfer. Required dependencies are included with the corresponding bundle
+where the manifest specifies them, and GLM-Image remains a Diffusers directory
+rather than being flattened. **Open Model Manager** still runs upstream's
+`model_manager` for other explicit downloads. Installing or launching an
+environment never downloads a large model automatically.
 
 Direct commands are also available:
 
@@ -68,6 +71,10 @@ Direct commands are also available:
 ujust strix-halo-comfyui -- install stable
 ujust strix-halo-comfyui -- launch stable
 ujust strix-halo-comfyui -- models stable
+ujust strix-halo-comfyui -- download-models
+ujust strix-halo-comfyui -- list-models
+ujust strix-halo-comfyui -- download-model qwen-image
+ujust strix-halo-comfyui -- download-model-nas qwen-gguf
 ujust strix-halo-comfyui -- shell experimental
 ujust strix-halo-comfyui -- status both
 ujust strix-halo-comfyui -- diagnostics
@@ -88,6 +95,11 @@ Distrobox shares the host home directory. Vimmite prepares these paths:
 The model downloader uses `HF_XET_HIGH_PERFORMANCE=1 hf download` and stores
 files under the destination subdirectories listed in the model menu. Existing
 complete files are reused when possible, while incomplete downloads can resume.
+The NAS source uses the same destination layout. Its defaults are
+`COMFYUI_NAS_HOST=10.1.1.5`, `COMFYUI_NAS_SHARE=ai`,
+`COMFYUI_NAS_SUBDIR=comfy-models`, and `COMFYUI_NAS_USER=guest`; set
+`COMFYUI_NAS_PASSWORD` for a password-protected share. These variables can be
+used with the direct command when the NAS is mounted at a different location.
 
 Separating the two user directories prevents an experimental UI or database
 change from overwriting stable settings. Vimmite seeds upstream's bundled UI
@@ -95,9 +107,10 @@ workflows into each user directory without overwriting an existing file.
 Upstream's API workflow copies remain available inside the container at
 `/opt/comfy-workflows`.
 
-The upstream `/opt/set_extra_paths.sh` remains the source of truth for the model
-folder mapping. Vimmite reruns it after every creation or refresh because the
-generated configuration lives in the disposable `/opt/ComfyUI` tree.
+Vimmite writes the model folder mapping to the disposable
+`/opt/ComfyUI/extra_model_paths.yaml` after every creation or refresh, keeping
+the shared model tree at `~/ai/comfy-models`. The upstream path helper is still
+checked for compatibility with the selected image.
 
 ## Updates, removal, and recovery
 
