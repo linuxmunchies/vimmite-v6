@@ -270,7 +270,7 @@ ramalama-run-liquid *prompt:
 ramalama-run-north *prompt:
     /usr/libexec/vimmite-ramalama run north "$@"
 
-[doc('Install Codex, Grok Build, Pi, Oh My Pi, Claude Code, DSH, or OpenCode')]
+[doc('Install Codex, Grok Build, Pi, Oh My Pi, Claude Code, DSH, OpenCode, or Hermes Agent')]
 [group('AI tools')]
 install-ai-cli tool="menu":
     /usr/libexec/vimmite-install-ai-cli "$@"

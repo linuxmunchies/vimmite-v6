@@ -85,7 +85,7 @@ image. See the [complete development-box guide](development.md).
 Open **Install AI coding tools** from the setup AI screen, RamaLama menu, or
 Strix Halo AI menu, or run `ujust install-ai-cli`. Select one tool at a time.
 For direct installation, use `ujust install-ai-cli <tool>` with `codex`, `grok`,
-`pi`, `omp`, `claude`, `dsh`, or `opencode`.
+`pi`, `omp`, `claude`, `dsh`, `opencode`, or `hermes`.
 
 These are optional per-user installations, run without sudo. Codex and DSH
 need Node.js and npm in the current environment and install under `~/.local`.
@@ -105,10 +105,13 @@ The other choices download and run the upstream installer using these URLs:
 | Claude Code | <https://claude.ai/install.sh> |
 | DSH / DeepSeek Harness | `@deepseek-ai/dsh` |
 | OpenCode | <https://opencode.ai/install> |
+| Hermes Agent | <https://hermes-agent.nousresearch.com/install.sh> |
 
 DSH installation does not start its web server; launch it afterward with
 `dsh web`. The upstream quick start is `npx @deepseek-ai/dsh web`
 ([DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)).
+Hermes Agent installs its `hermes` launcher in `~/.local/bin`; run `hermes
+setup` after installation to choose a provider.
 Follow each installer's PATH guidance and open a new terminal before use.
 Authentication is handled by each tool when you launch it.
 
