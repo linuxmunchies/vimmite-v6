@@ -44,7 +44,7 @@ jobs:
 
       - name: Build ISO
         id: build
-        uses: jasonn3/build-container-installer@v1.4.0
+        uses: jasonn3/build-container-installer@v1.5.0
         with:
           arch: x86_64
           image_name: ${{ env.IMAGE_NAME }}
