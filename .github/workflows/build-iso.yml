@@ -61,7 +61,7 @@ jobs:
           enable_flatpak_dependencies: "false"
 
       - name: Upload ISO
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vimmite-v6-kinoite-iso
           path: |
