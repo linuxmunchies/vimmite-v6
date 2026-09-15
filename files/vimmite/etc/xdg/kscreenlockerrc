@@ -2,5 +2,5 @@
 WallpaperPlugin=org.kde.image
 
 [Greeter][Wallpaper][org.kde.image][General]
-Image=file:///usr/share/wallpapers/VimmiteLock/
-PreviewImage=file:///usr/share/wallpapers/VimmiteLock/
+Image=file:///usr/share/wallpapers/Vimmite/
+PreviewImage=file:///usr/share/wallpapers/Vimmite/

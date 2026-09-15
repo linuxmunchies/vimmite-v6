@@ -68,9 +68,9 @@ rebase.
       credentials, browser state, and unrelated journal entries.
 - [ ] The installer/live Plasma session and a newly created user's first desktop
       use the Vimmite wallpaper and Vimmite Graphite color scheme.
-- [ ] SDDM and the Plasma lock screen use the Vimmite lock artwork at native and
-      mixed-DPI resolutions without stretching, clipping credentials, or
-      reducing contrast.
+- [ ] SDDM uses the Vimmite lock artwork and the Plasma lock screen uses the
+      Vimmite desktop wallpaper at native and mixed-DPI resolutions without
+      stretching, clipping credentials, or reducing contrast.
 - [ ] Kickoff uses the Vimmite mark; Fastfetch renders the Vimmite ASCII logo;
       Kitty uses JetBrains Mono Nerd Font, 12 px padding, and the Vimmite palette.
 - [ ] Wi-Fi, Ethernet, Bluetooth, audio, camera, keyboard, and touchpad work.

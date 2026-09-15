@@ -26,7 +26,8 @@ reserved for identity and attention so it remains distinctive.
 | Surface | Installed asset or setting |
 | --- | --- |
 | Desktop and installer/live session | `/usr/share/wallpapers/Vimmite/` |
-| Lock screen and SDDM login | `/usr/share/wallpapers/VimmiteLock/` |
+| Lock screen | `/usr/share/wallpapers/Vimmite/` |
+| SDDM login | `/usr/share/wallpapers/VimmiteLock/` |
 | Plasma global theme | `org.vimmite.desktop` (Vimmite Graphite) |
 | Scalable brand mark | `/usr/share/icons/hicolor/scalable/apps/vimmite.svg` |
 | Application launcher mark | `start-here-vimmite` |
