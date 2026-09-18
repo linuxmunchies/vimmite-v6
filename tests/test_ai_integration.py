@@ -1,6 +1,7 @@
 """Run with python3 -m unittest discover -s tests -v. No network or containers needed."""
 import os
 from pathlib import Path
+import pty
 import re
 import subprocess
 import tempfile
@@ -16,7 +17,7 @@ class AIIntegration(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
 
-    def run_functions(self, name, body, overrides=''):
+    def subject_source(self, name, overrides=''):
         source = (LIB / name).read_text()
         # Load production functions without invoking the public entry point.
         if '\ncase "${1:-menu}" in' in source:
@@ -37,10 +38,37 @@ class AIIntegration(unittest.TestCase):
         source = source.replace(' /usr/libexec/vimmite-', ' mock-vimmite-')
         overrides = overrides.replace('${1##*/}', '${1#mock-}')
         overrides = overrides.replace('CALLED:$1', 'CALLED:/usr/libexec/${1#mock-}')
+        return source + '\n' + overrides + '\n'
+
+    def run_functions(self, name, body, overrides=''):
         script = self.home / 'subject'
-        script.write_text(source + '\n' + overrides + '\n' + body)
+        script.write_text(self.subject_source(name, overrides) + body)
         return subprocess.run(['bash', str(script)], env={**os.environ, 'HOME': str(self.home)},
                               text=True, capture_output=True, timeout=10)
+
+    def run_functions_tty(self, name, body, overrides=''):
+        """Run the subject with a real pty on stdin/stdout, as a terminal user does."""
+        script = self.home / 'subject-tty'
+        script.write_text(self.subject_source(name, overrides) + body)
+        controller, follower = pty.openpty()
+        process = subprocess.Popen(['bash', str(script)], stdin=follower, stdout=follower,
+                                   stderr=follower, close_fds=True,
+                                   env={**os.environ, 'HOME': str(self.home)})
+        os.close(follower)
+        chunks = []
+        try:
+            while True:
+                try:
+                    chunk = os.read(controller, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        finally:
+            os.close(controller)
+        process.wait(timeout=10)
+        return b''.join(chunks).decode(errors='replace')
 
     def test_all_mega_menu_labels_dispatch(self):
         expected = ['install_menu', 'vimmite-ai-update menu', 'vimmite-ramalama',
@@ -144,6 +172,73 @@ distrobox() { printf '%s\\n' "$@"; }
         self.assertTrue((self.home / '.local/share/vimmite-ai/container/installed/codex').is_file())
         self.assertTrue((self.home / '.local/bin/codex-container').is_file())
         self.assertFalse((self.home / '.local/bin/codex').exists())
+
+    def test_container_exec_attaches_a_terminal_when_one_exists(self):
+        # Every harness and every upstream installer is a terminal program;
+        # forcing --no-tty left /dev/tty unopenable inside the box.
+        overrides = """
+ensure_devbox() { :; }
+distrobox() { printf '%s\\n' "$@"; }
+"""
+        with_tty = self.run_functions_tty('vimmite-install-ai-cli',
+                                          'install_cli codex container', overrides)
+        self.assertIn('vimmite-dev', with_tty)
+        self.assertNotIn('--no-tty', with_tty)
+
+    def test_container_exec_falls_back_to_no_tty_without_a_terminal(self):
+        result = self.run_functions('vimmite-install-ai-cli', 'install_cli codex container', """
+ensure_devbox() { :; }
+distrobox() { printf '%s\\n' "$@"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--no-tty', result.stdout)
+
+    def test_container_installer_is_executed_by_path_not_piped_on_stdin(self):
+        # Feeding the installer in on stdin consumed the terminal, so prompts
+        # and progress bars had nowhere to go.
+        result = self.run_functions('vimmite-install-ai-cli', 'install_cli grok container', """
+ensure_devbox() { :; }
+download() { printf '#!/bin/sh\\n' > "$2"; }
+distrobox() { printf '%s\\n' "$@"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        staged = f'{self.home}/.local/share/vimmite-ai/container/.cache/vimmite-ai/installers/installer.'
+        argv = result.stdout.splitlines()
+        self.assertTrue(any(line.startswith(staged) for line in argv), result.stdout)
+        self.assertNotIn('-s', argv)
+
+    def test_dsh_tracks_the_bleeding_edge_dist_tag(self):
+        result = self.run_functions('vimmite-install-ai-cli', 'install_cli dsh container', """
+ensure_devbox() { :; }
+distrobox() { printf '%s\\n' "$@"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('@deepseek-ai/dsh@alpha', result.stdout)
+        self.assertIn('@openai/codex@latest',
+                      self.run_functions('vimmite-install-ai-cli', 'install_cli codex container', """
+ensure_devbox() { :; }
+distrobox() { printf '%s\\n' "$@"; }
+""").stdout)
+
+    def test_npm_dist_tag_is_overridable(self):
+        os.environ['VIMMITE_AI_TAG_DSH'] = '0.1.6-alpha.2'
+        self.addCleanup(os.environ.pop, 'VIMMITE_AI_TAG_DSH', None)
+        result = self.run_functions('vimmite-install-ai-cli', 'install_cli dsh container', """
+ensure_devbox() { :; }
+distrobox() { printf '%s\\n' "$@"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('@deepseek-ai/dsh@0.1.6-alpha.2', result.stdout)
+
+    def test_installer_arguments_reach_the_upstream_script(self):
+        result = self.run_functions('vimmite-install-ai-cli',
+                                    'install_cli hermes container --skip-browser', """
+ensure_devbox() { :; }
+download() { printf '#!/bin/sh\\n' > "$2"; }
+distrobox() { printf '%s\\n' "$@"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--skip-browser', result.stdout.splitlines())
 
     def test_cli_menu_failure_not_swallowed(self):
         result = self.run_functions('vimmite-install-ai-cli', 'menu', '''

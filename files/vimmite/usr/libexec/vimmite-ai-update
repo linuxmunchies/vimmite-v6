@@ -11,8 +11,13 @@ devbox_exists() {
     command -v podman >/dev/null 2>&1 && podman container exists "${DEV_BOX}" >/dev/null 2>&1
 }
 
+# An install that was interrupted after the binary landed but before the
+# marker was written still deserves updating, so treat the container binary as
+# evidence too.
 box_has_command() {
-    devbox_exists && [[ -f "${HOME}/.local/share/vimmite-ai/container/installed/$1" ]]
+    local container_home="${HOME}/.local/share/vimmite-ai/container"
+    devbox_exists || return 1
+    [[ -f "${container_home}/installed/$1" || -e "${container_home}/.local/bin/$1" ]]
 }
 
 host_has_command() { command -v "$1" >/dev/null 2>&1; }
@@ -73,7 +78,11 @@ update_desktop_packages() {
         log "No host ChatGPT/Claude desktop RPMs were found."
     fi
     if devbox_exists; then
-        distrobox enter --name "${DEV_BOX}" --no-tty -- bash -s <<'EOF'
+        # Pass the script as an argument rather than on stdin so the terminal
+        # stays attached and dnf can draw its progress.
+        local -a enter_flags=(--name "${DEV_BOX}")
+        [[ -t 0 && -t 1 ]] || enter_flags+=(--no-tty)
+        distrobox enter "${enter_flags[@]}" -- bash -c '
 set -euo pipefail
 packages=()
 rpm -q chatgpt >/dev/null 2>&1 && packages+=(chatgpt)
@@ -83,7 +92,7 @@ if ((${#packages[@]} > 0)); then
 else
     echo "No ChatGPT/Claude desktop RPMs are installed in vimmite-dev."
 fi
-EOF
+'
     fi
 }
 

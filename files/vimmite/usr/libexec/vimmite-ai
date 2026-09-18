@@ -46,6 +46,8 @@ install_menu() {
 
 status_menu() {
     log "AI software status"
+    /usr/libexec/vimmite-install-ai-cli status || true
+    echo
     /usr/libexec/vimmite-install-ai-app chatgpt status || true
     /usr/libexec/vimmite-install-ai-app claude status || true
     /usr/libexec/vimmite-install-ai-app comfyui status || true

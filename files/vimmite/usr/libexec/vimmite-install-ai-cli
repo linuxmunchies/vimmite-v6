@@ -9,10 +9,38 @@ fi
 readonly user_prefix="${HOME}/.local"
 readonly dev_box="vimmite-dev"
 readonly container_home="${HOME}/.local/share/vimmite-ai/container"
+readonly staging_dir="${container_home}/.cache/vimmite-ai/installers"
+readonly -a all_clis=(codex grok pi omp claude dsh opencode hermes)
+
+if [[ -t 1 ]]; then
+    readonly c_reset=$'\033[0m' c_bold=$'\033[1m' c_dim=$'\033[2m'
+    readonly c_blue=$'\033[34m' c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m'
+else
+    readonly c_reset='' c_bold='' c_dim=''
+    readonly c_blue='' c_green='' c_yellow='' c_red=''
+fi
+
+step_start=0
+step() {
+    step_start="${SECONDS}"
+    printf '%s==>%s %s%s%s\n' "${c_blue}${c_bold}" "${c_reset}" "${c_bold}" "$*" "${c_reset}"
+}
+note() { printf '%s    %s%s\n' "${c_dim}" "$*" "${c_reset}"; }
+ok() { printf '%s  ok%s %s %s(%ss)%s\n' "${c_green}${c_bold}" "${c_reset}" "$*" "${c_dim}" "$(( SECONDS - step_start ))" "${c_reset}"; }
+warn() { printf '%swarn%s %s\n' "${c_yellow}${c_bold}" "${c_reset}" "$*" >&2; }
+fail() { printf '%sfail%s %s\n' "${c_red}${c_bold}" "${c_reset}" "$*" >&2; }
+
+# Every harness here is a full-screen terminal program, and every upstream
+# installer draws progress bars and asks questions. Both need a real pty on
+# stdin and stdout, so only fall back to --no-tty when there genuinely is no
+# terminal to attach (a pipe, a cron job, the test suite).
+tty_available() { [[ -t 0 && -t 1 ]]; }
 
 container_exec() {
     mkdir -p "${container_home}"
-    distrobox enter --name "${dev_box}" --no-tty -- env \
+    local -a enter_flags=(--name "${dev_box}")
+    tty_available || enter_flags+=(--no-tty)
+    distrobox enter "${enter_flags[@]}" -- env \
         HOME="${container_home}" XDG_CONFIG_HOME="${container_home}/.config" \
         XDG_DATA_HOME="${container_home}/.local/share" XDG_CACHE_HOME="${container_home}/.cache" \
         NPM_CONFIG_PREFIX="${container_home}/.local" \
@@ -24,9 +52,16 @@ container_exec() {
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|hermes|menu|help] [host|container]
+Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|hermes] [host|container] [-- ARGS...]
+       vimmite-install-ai-cli [menu|status|help]
 
 Install an AI coding CLI into the current user's environment.
+
+Arguments after -- are passed through to the upstream installer, for example:
+  vimmite-install-ai-cli hermes container -- --skip-browser
+
+Set VIMMITE_AI_TAG_<CLI> to pin an npm-published harness to another dist-tag
+or version, for example VIMMITE_AI_TAG_DSH=latest or VIMMITE_AI_TAG_CODEX=next.
 EOF
 }
 
@@ -79,26 +114,53 @@ ensure_devbox() {
     }
 }
 
+# npm's "latest" tag is the conservative one. Harnesses that ship their real
+# work on a pre-release tag are listed here so the default install tracks the
+# bleeding edge, and any of them can be overridden per invocation.
+cli_npm_tag() {
+    local cli="$1"
+    local override_name="VIMMITE_AI_TAG_${cli^^}"
+    local override="${!override_name:-}"
+    if [[ -n "${override}" ]]; then
+        printf '%s\n' "${override}"
+        return 0
+    fi
+    case "${cli}" in
+        dsh) printf 'alpha\n' ;;
+        *) printf 'latest\n' ;;
+    esac
+}
+
+download() {
+    local url="$1" dest="$2"
+    if tty_available; then
+        curl -fL --progress-bar --retry 3 --retry-delay 2 "${url}" -o "${dest}"
+    else
+        curl -fsSL --retry 3 --retry-delay 2 "${url}" -o "${dest}"
+    fi
+}
+
 install_npm_cli() {
     local package="$1"
     local name="$2"
 
     if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-        echo "Cannot install ${name}: both node and npm are required." >&2
+        fail "Cannot install ${name}: both node and npm are required."
         echo "Install Node.js and npm, then run this command again." >&2
         return 1
     fi
 
     if ! mkdir -p "${user_prefix}/bin"; then
-        echo "Cannot create ${user_prefix}/bin." >&2
+        fail "Cannot create ${user_prefix}/bin."
         return 1
     fi
-    echo "Installing ${name} for the current user..."
-    if ! npm install --global --prefix "${user_prefix}" "${package}"; then
-        echo "The ${name} npm installation failed." >&2
+    step "Installing ${name} for the current user"
+    note "package: ${package}"
+    if ! npm install --global --prefix "${user_prefix}" --no-fund --no-audit "${package}"; then
+        fail "The ${name} npm installation failed."
         return 1
     fi
-    echo "${name} installed in ${user_prefix}/bin."
+    ok "${name} installed in ${user_prefix}/bin"
     echo "If the command is not found, add ${user_prefix}/bin to PATH and open a new shell."
 }
 
@@ -106,37 +168,48 @@ install_npm_cli_container() {
     local package="$1"
     local name="$2"
     ensure_devbox || return 1
-    echo "Installing ${name} inside ${dev_box} ..."
-    container_exec bash -c \
-        'mkdir -p "$HOME/.local/bin" && npm install --global --prefix "$HOME/.local" "$1"' \
-        _ "${package}"
-    echo "${name} is available inside ${dev_box} under ${container_home}."
+    step "Installing ${name} inside ${dev_box}"
+    note "package: ${package}"
+    note "npm prints its own progress below; a cold install can take a few minutes."
+    container_exec bash -c '
+set -euo pipefail
+if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is missing inside the container. Rebuild it with: ujust vimmite-dev update" >&2
+    exit 1
+fi
+mkdir -p "$HOME/.local/bin"
+npm install --global --prefix "$HOME/.local" --no-fund --no-audit "$1"
+' _ "${package}"
+    ok "${name} is available inside ${dev_box} under ${container_home}"
 }
 
 install_script_cli() {
     local url="$1"
     local name="$2"
     local shell="$3"
+    shift 3
 
     (
-        local installer
+        installer=""
         trap 'rm -f -- "${installer:-}"' EXIT
 
         if ! installer="$(mktemp)"; then
-            echo "Could not create a temporary file for the ${name} installer." >&2
+            fail "Could not create a temporary file for the ${name} installer."
             exit 1
         fi
-        echo "Downloading ${name} installer..."
-        if ! curl -fsSL "${url}" -o "${installer}"; then
-            echo "Could not download the ${name} installer." >&2
+        step "Downloading the ${name} installer"
+        if ! download "${url}" "${installer}"; then
+            fail "Could not download the ${name} installer."
             exit 1
         fi
-        echo "Running the ${name} installer..."
-        if ! "${shell}" "${installer}"; then
-            echo "The ${name} installer failed." >&2
+        ok "Installer downloaded"
+        step "Running the ${name} installer"
+        note "everything below is the ${name} installer's own output."
+        if ! "${shell}" "${installer}" "$@"; then
+            fail "The ${name} installer failed."
             exit 1
         fi
-        echo "${name} installed."
+        ok "${name} installed"
     )
 }
 
@@ -144,53 +217,84 @@ install_script_cli_container() {
     local url="$1"
     local name="$2"
     local shell="$3"
+    shift 3
     ensure_devbox || return 1
+    mkdir -p "${staging_dir}"
+    # An interrupted run cannot fire its cleanup trap, so sweep what it left.
+    find "${staging_dir}" -maxdepth 1 -type f -name 'installer.*' -mmin +60 -delete 2>/dev/null || true
     (
-        local installer
+        installer=""
         trap 'rm -f -- "${installer:-}"' EXIT
-        installer="$(mktemp)"
-        echo "Downloading ${name} installer..."
-        curl -fsSL "${url}" -o "${installer}"
-        echo "Running the ${name} installer inside ${dev_box} ..."
-        container_exec "${shell}" -s < "${installer}"
-        echo "${name} installed inside ${dev_box}."
+        # Stage the installer inside the container home rather than piping it in
+        # on stdin. distrobox mounts this path at the same location, so the box
+        # runs it by path and stdin stays attached to the terminal, which is
+        # what upstream installers use for prompts and progress bars.
+        installer="$(mktemp "${staging_dir}/installer.XXXXXX")"
+        step "Downloading the ${name} installer"
+        download "${url}" "${installer}"
+        chmod 0755 "${installer}"
+        ok "Installer downloaded"
+        step "Running the ${name} installer inside ${dev_box}"
+        note "everything below is the ${name} installer's own output."
+        note "large downloads and git fetches can run for several minutes."
+        container_exec "${shell}" "${installer}" "$@"
+        ok "${name} installed inside ${dev_box}"
     )
+}
+
+record_container_install() {
+    local cli="$1"
+    mkdir -p "${container_home}/installed" "${HOME}/.local/bin"
+    touch "${container_home}/installed/${cli}"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'exec /usr/libexec/vimmite-install-ai-cli run-container %q "$@"\n' "${cli}"
+    } > "${HOME}/.local/bin/${cli}-container"
+    chmod 0755 "${HOME}/.local/bin/${cli}-container"
+    echo "Launch with: ${cli}-container"
 }
 
 install_cli() {
     local cli="$1"
     local target="${2:-host}"
+    # Only what follows the CLI and target is meant for the upstream installer;
+    # a bare `shift 2` would leave them in place when they are the only args.
+    if (( $# > 2 )); then shift 2; else set --; fi
+    local -a installer_args=("$@")
 
     case "${target}" in
         host|container) ;;
         *) echo "Unknown installation target: ${target}" >&2; return 2 ;;
     esac
 
+    local package
     case "${cli}" in
         codex)
-            if [[ "${target}" == container ]]; then install_npm_cli_container '@openai/codex' 'Codex'; else install_npm_cli '@openai/codex' 'Codex'; fi
+            package="@openai/codex@$(cli_npm_tag codex)"
+            if [[ "${target}" == container ]]; then install_npm_cli_container "${package}" 'Codex'; else install_npm_cli "${package}" 'Codex'; fi
             ;;
         grok)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://x.ai/cli/install.sh' 'Grok Build' bash; else install_script_cli 'https://x.ai/cli/install.sh' 'Grok Build' bash; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://x.ai/cli/install.sh' 'Grok Build' bash "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://x.ai/cli/install.sh' 'Grok Build' bash "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         pi)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://pi.dev/install.sh' 'Pi' sh; else install_script_cli 'https://pi.dev/install.sh' 'Pi' sh; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://pi.dev/install.sh' 'Pi' sh "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://pi.dev/install.sh' 'Pi' sh "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         omp)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://omp.sh/install' 'Oh My Pi' sh; else install_script_cli 'https://omp.sh/install' 'Oh My Pi' sh; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://omp.sh/install' 'Oh My Pi' sh "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://omp.sh/install' 'Oh My Pi' sh "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         claude)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://claude.ai/install.sh' 'Claude Code' bash; else install_script_cli 'https://claude.ai/install.sh' 'Claude Code' bash; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://claude.ai/install.sh' 'Claude Code' bash "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://claude.ai/install.sh' 'Claude Code' bash "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         dsh)
-            if [[ "${target}" == container ]]; then install_npm_cli_container '@deepseek-ai/dsh' 'DeepSeek Harness'; else install_npm_cli '@deepseek-ai/dsh' 'DeepSeek Harness'; fi
+            package="@deepseek-ai/dsh@$(cli_npm_tag dsh)"
+            if [[ "${target}" == container ]]; then install_npm_cli_container "${package}" 'DeepSeek Harness'; else install_npm_cli "${package}" 'DeepSeek Harness'; fi
             echo "Launch it with: dsh web"
             ;;
         opencode)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://opencode.ai/install' 'OpenCode' bash; else install_script_cli 'https://opencode.ai/install' 'OpenCode' bash; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://opencode.ai/install' 'OpenCode' bash "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://opencode.ai/install' 'OpenCode' bash "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         hermes)
-            if [[ "${target}" == container ]]; then install_script_cli_container 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash; else install_script_cli 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash; fi
+            if [[ "${target}" == container ]]; then install_script_cli_container 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash "${installer_args[@]+"${installer_args[@]}"}"; else install_script_cli 'https://hermes-agent.nousresearch.com/install.sh' 'Hermes Agent' bash "${installer_args[@]+"${installer_args[@]}"}"; fi
             ;;
         *)
             echo "Unknown AI CLI: ${cli}" >&2
@@ -199,14 +303,42 @@ install_cli() {
             ;;
     esac
     if [[ "${target}" == container ]]; then
-        mkdir -p "${container_home}/installed" "${HOME}/.local/bin"
-        touch "${container_home}/installed/${cli}"
-        {
-            printf '#!/usr/bin/env bash\n'
-            printf 'exec /usr/libexec/vimmite-install-ai-cli run-container %q "$@"\n' "${cli}"
-        } > "${HOME}/.local/bin/${cli}-container"
-        chmod 0755 "${HOME}/.local/bin/${cli}-container"
-        echo "Launch with: ${cli}-container"
+        record_container_install "${cli}"
+    fi
+}
+
+# Harnesses land in whichever directory their installer prefers, so look
+# wherever container_exec puts them on PATH rather than in ~/.local/bin alone.
+container_binary() {
+    local cli="$1" dir
+    for dir in .local/bin .bun/bin .cargo/bin .opencode/bin .hermes/bin; do
+        if [[ -e "${container_home}/${dir}/${cli}" ]]; then
+            printf '%s\n' "${container_home}/${dir}/${cli}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+status() {
+    local cli state host_path
+    printf '%sAI coding harnesses%s\n' "${c_bold}" "${c_reset}"
+    printf '%-10s %-30s %s\n' 'CLI' "in ${dev_box}" 'on host'
+    for cli in "${all_clis[@]}"; do
+        state='-'
+        [[ -e "${container_home}/installed/${cli}" ]] && state='recorded, binary missing'
+        if container_binary "${cli}" >/dev/null; then
+            if [[ -x "${HOME}/.local/bin/${cli}-container" ]]; then
+                state="installed (${cli}-container)"
+            else
+                state='installed, launcher missing'
+            fi
+        fi
+        host_path="$(command -v "${cli}" 2>/dev/null || true)"
+        printf '%-10s %-30s %s\n' "${cli}" "${state}" "${host_path:--}"
+    done
+    if ! devbox_exists; then
+        warn "${dev_box} is not present; run 'ujust vimmite-dev create'."
     fi
 }
 
@@ -221,6 +353,7 @@ menu() {
         'Install or update DSH (DeepSeek Harness)'
         'Install or update OpenCode'
         'Install or update Hermes Agent'
+        'Show installed harnesses'
         'Quit'
     )
 
@@ -241,6 +374,7 @@ menu() {
             'Install or update DSH (DeepSeek Harness)') install_cli_with_target dsh ;;
             'Install or update OpenCode') install_cli_with_target opencode ;;
             'Install or update Hermes Agent') install_cli_with_target hermes ;;
+            'Show installed harnesses') status ;;
             Quit) return 0 ;;
         esac
         pause_menu || return 0
@@ -265,10 +399,21 @@ install_cli_with_target() {
 case "${1:-menu}" in
     run-container) shift; ensure_devbox; container_exec "$@" ;;
     menu) menu ;;
+    status) status ;;
     help|-h|--help) usage ;;
     codex|grok|pi|omp|claude|dsh|opencode|hermes)
-        [[ $# -le 2 ]] || { echo "Unexpected extra arguments: ${*:3}" >&2; exit 2; }
-        install_cli "$1" "${2:-host}"
+        cli="$1"
+        shift
+        target=host
+        if (( $# > 0 )) && [[ "$1" != -- ]]; then
+            target="$1"
+            shift
+        fi
+        if (( $# > 0 )); then
+            [[ "$1" == -- ]] || { echo "Unexpected extra arguments: $*" >&2; exit 2; }
+            shift
+        fi
+        install_cli "${cli}" "${target}" "$@"
         ;;
     *)
         usage >&2
