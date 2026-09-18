@@ -123,9 +123,19 @@ The coding-harness choices are:
 | Pi | <https://pi.dev/install.sh> |
 | OMP / Oh My Pi | <https://omp.sh/install> |
 | Claude Code | <https://claude.ai/install.sh> |
-| DSH / DeepSeek Harness | `@deepseek-ai/dsh` |
+| DSH / DeepSeek Harness | `@deepseek-ai/dsh` (`alpha` tag) |
 | OpenCode | <https://opencode.ai/install> |
 | Hermes Agent | <https://hermes-agent.nousresearch.com/install.sh> |
+
+npm-published harnesses install from the `latest` dist-tag, except DSH, whose
+`latest` tag trails its real development line; it installs from `alpha`. Set
+`VIMMITE_AI_TAG_<CLI>` to choose another tag or an exact version, for example
+`VIMMITE_AI_TAG_DSH=latest ujust install-ai-cli dsh container` or
+`VIMMITE_AI_TAG_CODEX=0.9.0 ujust install-ai-cli codex container`.
+
+Arguments after `--` reach the upstream installer unchanged, which is useful
+for the longer installs:
+`ujust install-ai-cli hermes container -- --skip-browser`.
 
 DSH installation does not start its web server; launch it afterward with
 `dsh web`. The upstream quick start is `npx @deepseek-ai/dsh web`
@@ -277,6 +287,13 @@ and package directories. Launch them through `<tool>-container` (for example,
 `codex-container`) so the container and its environment are selected together.
 Host commands keep their normal names and paths. Existing shared CLI installs
 must be reinstalled for the container target to establish this isolation.
+
+Installs and `<tool>-container` launches attach the terminal to the container,
+so upstream installers can show progress and ask questions, and the harnesses
+themselves can open `/dev/tty` and run their full-screen interfaces. Run them
+from a real terminal: piping either one (or running it from a script or cron)
+falls back to a non-interactive container session, and a harness started that
+way exits rather than drawing its interface.
 
 Generic ComfyUI keeps independent `host` and `container` directories under
 `~/.local/share/vimmite-comfyui`, each with its own checkout and virtual
