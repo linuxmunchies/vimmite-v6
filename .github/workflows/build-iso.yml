@@ -28,7 +28,7 @@ jobs:
       IMAGE_NAME: vimmite-v6-kinoite
       IMAGE_REPO: ghcr.io/linuxmunchies
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
