@@ -196,6 +196,7 @@ comfy_install_host() {
     fi
     "${COMFY_VENV}/bin/python" -m pip install --upgrade pip
     "${COMFY_VENV}/bin/python" -m pip install --upgrade -r "${COMFY_SOURCE}/requirements.txt"
+    "${COMFY_VENV}/bin/python" -m pip install -U --pre comfyui-manager
 }
 
 comfy_install_container() {
@@ -216,6 +217,7 @@ if [[ ! -x "${comfy_venv}/bin/python" ]]; then
 fi
 "${comfy_venv}/bin/python" -m pip install --upgrade pip
 "${comfy_venv}/bin/python" -m pip install --upgrade -r "${comfy_source}/requirements.txt"
+"${comfy_venv}/bin/python" -m pip install -U --pre comfyui-manager
 EOF
 }
 
@@ -276,8 +278,8 @@ launch_comfyui() {
     comfy_paths "${target}"
     [[ -f "${COMFY_ROOT}/installed" ]] || die "Install ComfyUI for ${target} first; older shared environments are retained but must be reinstalled into the isolated target."
     case "${target}" in
-        host) exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 "$@" ;;
-        container) ensure_devbox; box_exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 "$@" ;;
+        host) exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 --enable-manager "$@" ;;
+        container) ensure_devbox; box_exec "${COMFY_VENV}/bin/python" "${COMFY_SOURCE}/main.py" --listen 127.0.0.1 --port 8188 --enable-manager "$@" ;;
         *) die "Unknown ComfyUI install target: ${target}" ;;
     esac
 }

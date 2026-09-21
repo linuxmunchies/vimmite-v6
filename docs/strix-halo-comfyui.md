@@ -193,10 +193,13 @@ identity gate with `STRIX_HALO_AI_ALLOW_UNSUPPORTED=1`; real `/dev/dri` and
 
 Upstream bundles its supported custom nodes below `/opt/ComfyUI/custom_nodes`.
 Vimmite intentionally does not mount over that directory, because doing so would
-hide the tested nodes in the image. Custom nodes or Python packages installed
-manually inside the container are therefore lost on refresh. Keep a record of
-manual additions and reinstall them after an update, or wait for an upstream
-supported persistence mechanism rather than relying on container-local state.
+hide the tested nodes in the image. Create, update, and first launch install
+ComfyUI-Manager with `pip install -U --pre comfyui-manager` in the container
+venv and enable it with `--enable-manager`, because that package lives in the
+disposable image. Other custom nodes or Python packages installed manually
+inside the container are lost on refresh. Keep a record of those additions and
+reinstall them after an update, or wait for an upstream supported persistence
+mechanism rather than relying on container-local state.
 
 See upstream for current workflows, model requirements, launch workarounds, and
 container contents:

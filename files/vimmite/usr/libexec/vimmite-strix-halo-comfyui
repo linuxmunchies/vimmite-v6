@@ -221,6 +221,38 @@ EOF
     fi
 }
 
+# Pip packages inside the disposable toolbox are lost on refresh. Reinstall
+# ComfyUI-Manager after create/update, and on launch when it is missing.
+ensure_comfyui_manager() {
+    local container="$1"
+    local upgrade="${2:-0}"
+    if [[ "${upgrade}" != 1 ]] && container_exec "${container}" /opt/venv/bin/python -m pip show comfyui-manager >/dev/null 2>&1; then
+        :
+    else
+        log "Installing ComfyUI-Manager in ${container} ..."
+        container_exec "${container}" /opt/venv/bin/python -m pip install -U --pre comfyui-manager
+    fi
+    container_exec "${container}" bash -s <<'EOF'
+set -euo pipefail
+banner=/etc/profile.d/99-toolbox-banner.sh
+snippet=/etc/profile.d/zz-vimmite-comfyui-manager.sh
+[[ -f "${banner}" ]] || exit 0
+grep -q "alias start_comfy_ui=" "${banner}" || exit 0
+if [[ -f "${snippet}" ]] && grep -Fq -- '--enable-manager' "${snippet}"; then
+    exit 0
+fi
+sudo tee "${snippet}" >/dev/null <<'SNIPPET'
+# Enable ComfyUI-Manager for the upstream start_comfy_ui alias.
+if alias start_comfy_ui >/dev/null 2>&1; then
+    case "$(alias start_comfy_ui 2>/dev/null)" in
+        *enable-manager*) ;;
+        *) alias start_comfy_ui="${BASH_ALIASES[start_comfy_ui]} --enable-manager" ;;
+    esac
+fi
+SNIPPET
+EOF
+}
+
 sanity_check() {
     local environment="$1" container output
     container="$(environment_container "${environment}")"
@@ -272,6 +304,7 @@ create_environment() {
     if have_container "${container}"; then
         log "${container} already exists; leaving it intact. Use Update/refresh to replace it."
         setup_persistence "${environment}"
+        ensure_comfyui_manager "${container}" 1
         sanity_check "${environment}"
         return
     fi
@@ -286,6 +319,7 @@ create_environment() {
         --no-entry \
         --additional-flags "${CONTAINER_FLAGS}"
     setup_persistence "${environment}"
+    ensure_comfyui_manager "${container}" 1
     sanity_check "${environment}"
     log "$(environment_label "${environment}") ComfyUI is ready. Launch it from the menu or run: ujust strix-halo-comfyui -- launch ${environment}"
 }
@@ -339,6 +373,7 @@ update_environment() {
             --no-entry \
             --additional-flags "${CONTAINER_FLAGS}" \
             && setup_persistence "${environment}" \
+            && ensure_comfyui_manager "${container}" 1 \
             && sanity_check "${environment}"; then
         cleanup_old_images
         log "${container} was refreshed from ${image}; models, inputs, outputs, workflows, and settings in HOME were preserved."
@@ -393,10 +428,11 @@ launch_environment() {
     user_dir="$(environment_user_dir "${environment}")"
     ensure_host_data "${environment}"
     setup_persistence "${environment}"
+    ensure_comfyui_manager "${container}"
     log "Launching $(environment_label "${environment}") ComfyUI at ${COMFY_URL}"
     log "It is bound locally; stop it with Ctrl+C."
     exec distrobox enter --name "${container}" -- bash -lic \
-        'start_comfy_ui "$@"' _ --user-directory "${user_dir}" --input-directory "${INPUT_DIR}"
+        'start_comfy_ui "$@"' _ --user-directory "${user_dir}" --input-directory "${INPUT_DIR}" --enable-manager
 }
 
 enter_environment() {

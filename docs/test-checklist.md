@@ -120,10 +120,12 @@ rebase.
 - [ ] Both ComfyUI containers receive `/dev/dri`, `/dev/kfd`, `keep-groups`,
       and unconfined seccomp through rootless Podman.
 - [ ] Install/create verifies the upstream path helper and `start_comfy_ui`
-      alias, writes the model mapping for `~/ai/comfy-models`, and reports
-      PyTorch GPU availability on gfx1151.
+      alias, writes the model mapping for `~/ai/comfy-models`, installs
+      `comfyui-manager` with `pip install -U --pre`, and reports PyTorch GPU
+      availability on gfx1151.
 - [ ] Stable and experimental ComfyUI launch at `http://127.0.0.1:8000`
-      without a LAN listen flag and use separate persistent user directories.
+      without a LAN listen flag, pass `--enable-manager`, and use separate
+      persistent user directories.
 - [ ] Both channels share sentinels in `~/ai/comfy-models`, `~/ai/comfy-inputs`, and
       `~/ai/comfy-outputs`; refresh and removal preserve them.
 - [ ] ComfyUI model downloads offer separate Hugging Face and NAS sources,

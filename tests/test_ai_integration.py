@@ -304,6 +304,15 @@ box_shell() { cat; }
         self.assertIn('comfy_root="${HOME}/.local/share/vimmite-comfyui/container"', result.stdout)
         self.assertIn('comfy_source="${comfy_root}/ComfyUI"', result.stdout)
         self.assertIn('comfy_venv="${comfy_root}/venv"', result.stdout)
+        self.assertIn('pip install -U --pre comfyui-manager', result.stdout)
+
+    def test_generic_comfy_installs_and_enables_manager(self):
+        source = (LIB / 'vimmite-install-ai-app').read_text()
+        self.assertEqual(source.count('pip install -U --pre comfyui-manager'), 2)
+        self.assertIn('--enable-manager', source)
+        host = self.run_functions('vimmite-install-ai-app', 'type comfy_install_host')
+        self.assertEqual(host.returncode, 0, host.stderr)
+        self.assertIn('pip install -U --pre comfyui-manager', host.stdout)
 
     def test_comfy_model_catalog_lists_manifest_choices_with_sizes(self):
         result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
@@ -619,6 +628,19 @@ test -f "$HOME/comfy-models/diffusion_models/sentinel.safetensors"
         self.assertEqual((self.home / 'ai/comfy-models/vae/existing.safetensors').read_text(), 'kept\n')
         self.assertTrue((self.home / 'comfy-models/diffusion_models/sentinel.safetensors').is_file())
         self.assertIn('Merging leftover', result.stdout)
+
+    def test_strix_comfy_installs_and_enables_manager(self):
+        source = (LIB / 'vimmite-strix-halo-comfyui').read_text()
+        self.assertIn('pip install -U --pre comfyui-manager', source)
+        self.assertIn('--enable-manager', source)
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+container_exec() { printf '%s\\n' "$*"; }
+log() { printf '%s\\n' "$*"; }
+ensure_comfyui_manager demo-container 1
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('/opt/venv/bin/python -m pip install -U --pre comfyui-manager', result.stdout)
+        self.assertIn('Installing ComfyUI-Manager in demo-container', result.stdout)
 
     def test_strix_menu_separates_llm_and_comfy_downloads(self):
         source = (LIB / 'vimmite-strix-halo-ai').read_text()

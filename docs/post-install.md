@@ -298,11 +298,13 @@ way exits rather than drawing its interface.
 
 Generic ComfyUI keeps independent `host` and `container` directories under
 `~/.local/share/vimmite-comfyui`, each with its own checkout and virtual
-environment. Both installed targets receive updates. Use
-`vimmite-comfyui host` or `vimmite-comfyui container` to choose explicitly;
-without a target the launcher selects the most recently installed target.
-Old shared checkouts are retained; reinstall each desired target to create
-its isolated environment.
+environment. Both installed targets receive updates. Install and update run
+`pip install -U --pre comfyui-manager` in that target's venv, and launch
+passes `--enable-manager`. Use `vimmite-comfyui host` or
+`vimmite-comfyui container` to choose explicitly; without a target the
+launcher selects the most recently installed target. Old shared checkouts
+are retained; reinstall each desired target to create its isolated
+environment.
 
 `ujust ai-update all` upgrades the development box in place, preserving desktop
 RPMs. It also updates an existing managed RamaLama CLI without downloading
