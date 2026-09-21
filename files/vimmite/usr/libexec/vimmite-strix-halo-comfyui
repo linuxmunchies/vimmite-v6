@@ -7,14 +7,26 @@ readonly STABLE_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:latest"
 readonly EXPERIMENTAL_CONTAINER="strix-halo-comfyui-experimental"
 readonly EXPERIMENTAL_IMAGE="docker.io/kyuz0/amd-strix-halo-comfyui:dev"
 readonly MODEL_DIR="${HOME}/ai/comfy-models"
-readonly COMFYUI_NAS_HOST="${COMFYUI_NAS_HOST:-10.1.1.5}"
+readonly COMFYUI_NAS_HOST="${COMFYUI_NAS_HOST:-foxraid.local}"
 readonly COMFYUI_NAS_SHARE="${COMFYUI_NAS_SHARE:-ai}"
 readonly COMFYUI_NAS_SUBDIR="${COMFYUI_NAS_SUBDIR:-comfy-models}"
 readonly COMFYUI_NAS_USER="${COMFYUI_NAS_USER:-guest}"
 readonly COMFYUI_NAS_PASSWORD="${COMFYUI_NAS_PASSWORD:-}"
-readonly OUTPUT_DIR="${HOME}/comfy-outputs"
-readonly INPUT_DIR="${HOME}/comfy-inputs"
-readonly USER_ROOT="${HOME}/comfy-user"
+readonly OUTPUT_DIR="${HOME}/ai/comfy-outputs"
+readonly INPUT_DIR="${HOME}/ai/comfy-inputs"
+readonly USER_ROOT="${HOME}/ai/comfy-user"
+readonly JOB_ROOT="${HOME}/.cache/vimmite-comfyui/jobs"
+# Cap concurrent work so Xet cannot open five 64 GB buffers at once.
+# 400 Mbit/s is 50 MB/s shared across whatever is actually running.
+readonly JOB_MAX_RUNNING="${COMFYUI_JOB_MAX:-2}"
+readonly JOB_MAX_HF="${COMFYUI_JOB_MAX_HF:-1}"
+readonly JOB_MAX_MBPS="${COMFYUI_JOB_MAX_MBPS:-400}"
+readonly NAS_INDEX="${HOME}/.cache/vimmite-comfyui/nas.files"
+readonly NAS_STAMP="${HOME}/.cache/vimmite-comfyui/nas.scanned"
+readonly LEGACY_MODEL_DIR="${HOME}/comfy-models"
+readonly LEGACY_OUTPUT_DIR="${HOME}/comfy-outputs"
+readonly LEGACY_INPUT_DIR="${HOME}/comfy-inputs"
+readonly LEGACY_USER_ROOT="${HOME}/comfy-user"
 readonly IMAGE_REPOSITORY="docker.io/kyuz0/amd-strix-halo-comfyui"
 readonly COMFY_URL="http://127.0.0.1:8000"
 readonly CONTAINER_FLAGS='--device /dev/dri --device /dev/kfd --group-add keep-groups --security-opt seccomp=unconfined'
@@ -22,6 +34,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/vimmite-strix-halo-common"
+
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    readonly c_reset=$'\033[0m' c_bold=$'\033[1m' c_dim=$'\033[2m'
+    readonly c_green=$'\033[32m' c_yellow=$'\033[33m' c_red=$'\033[31m' c_cyan=$'\033[36m'
+else
+    readonly c_reset='' c_bold='' c_dim=''
+    readonly c_green='' c_yellow='' c_red='' c_cyan=''
+fi
 
 environment_container() {
     case "$1" in
@@ -51,8 +71,95 @@ environment_label() {
     esac
 }
 
+legacy_dir_is_empty() {
+    local dir="$1"
+    [[ -d "${dir}" ]] || return 1
+    [[ -z "$(find "${dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]
+}
+
+# Move a leftover ~/comfy-* tree when the ~/ai destination is missing or empty.
+# If both trees have content, rsync -a into dest and leave the old tree in place.
+migrate_legacy_tree() {
+    local source
+    local dest
+    source="$1"
+    dest="$2"
+
+    # A leftover path that is already a link into ~/ai is the compatibility shim.
+    if [[ -L "${source}" ]]; then
+        return 0
+    fi
+    [[ -d "${source}" ]] || return 0
+    [[ "${source}" != "${dest}" ]] || return 0
+    mkdir -p -- "$(dirname -- "${dest}")"
+
+    if [[ ! -e "${dest}" ]] || legacy_dir_is_empty "${dest}"; then
+        if [[ -d "${dest}" ]]; then
+            rmdir -- "${dest}" || true
+        fi
+        if [[ ! -e "${dest}" ]]; then
+            log "Migrating leftover ${source} -> ${dest}"
+            mv -- "${source}" "${dest}"
+            ln -sfn -- "${dest}" "${source}"
+            log "Compatibility link ${source} -> ${dest}"
+            return 0
+        fi
+    fi
+
+    if [[ ! -d "${dest}" ]]; then
+        warn "Cannot migrate ${source}: ${dest} exists and is not a directory."
+        return 0
+    fi
+    if ! command -v rsync >/dev/null 2>&1; then
+        warn "rsync is required to merge leftover ${source} into ${dest}; left both trees in place."
+        return 0
+    fi
+    log "Merging leftover ${source} into ${dest}"
+    rsync -a "${source}/" "${dest}/"
+    log "Left ${source} in place after merge into ${dest}. Remove it after verifying the copy."
+}
+
+# Leftover ~/comfy-models is never the live root. Prefer mv when dest is absent;
+# otherwise copy with --ignore-existing and leave the old tree for the operator.
+migrate_legacy_models() {
+    local source
+    local dest
+    source="${LEGACY_MODEL_DIR}"
+    dest="${MODEL_DIR}"
+
+    [[ -d "${source}" ]] || return 0
+    [[ "${source}" != "${dest}" ]] || return 0
+    mkdir -p -- "$(dirname -- "${dest}")"
+
+    if [[ ! -e "${dest}" ]]; then
+        log "Migrating leftover ${source} -> ${dest}"
+        mv -- "${source}" "${dest}"
+        return 0
+    fi
+    if [[ ! -d "${dest}" ]]; then
+        warn "Cannot migrate leftover ${source}: ${dest} exists and is not a directory."
+        return 0
+    fi
+    if ! command -v rsync >/dev/null 2>&1; then
+        warn "rsync is required to merge leftover ${source} into ${dest}; left both trees in place."
+        return 0
+    fi
+    log "Merging leftover ${source} into ${dest} (keeping existing files)"
+    rsync -a --ignore-existing "${source}/" "${dest}/"
+    log "Left ${source} in place after merge into ${dest}. Remove it after verifying the copy."
+}
+
+migrate_legacy_comfy_dirs() {
+    mkdir -p -- "${HOME}/ai" "${OUTPUT_DIR}" "${INPUT_DIR}" "${USER_ROOT}"
+    migrate_legacy_tree "${LEGACY_INPUT_DIR}" "${INPUT_DIR}"
+    migrate_legacy_tree "${LEGACY_OUTPUT_DIR}" "${OUTPUT_DIR}"
+    migrate_legacy_tree "${LEGACY_USER_ROOT}" "${USER_ROOT}"
+    migrate_legacy_models
+}
+
 ensure_host_data() {
     local environment="$1"
+    migrate_legacy_comfy_dirs
     mkdir -p "${MODEL_DIR}" "${OUTPUT_DIR}" "${INPUT_DIR}" "$(environment_user_dir "${environment}")"
     mkdir -p "${MODEL_DIR}"/{checkpoints,diffusion_models,unet,text_encoders,vae,loras,clip_vision,upscale_models,latent_upscale_models,diffusers}
 }
@@ -301,42 +408,91 @@ enter_environment() {
 
 # Labels quote main-weight sizes from the supplied manifest; dependencies are
 # additional. Estimates for unspecified sizes are deliberately marked rough.
+# Format: id|category|label
 model_catalog() {
     cat <<'EOF'
-qwen-image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
-qwen-lightning|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
-qwen-gguf|Qwen Image 2512 Q4_K_M (~13.2 GB + dependencies)
-anima|Anima Aesthetic v1.1 (~4.18 GB + dependencies)
-ideogram|Ideogram 4 FP8 (~9.28 GB conditional + unconditional/dependencies)
-z-image|Z-Image Turbo BF16 (~12.3 GB + dependencies)
-z-patch|Z-Image Turbo distillation patch (roughly ~1 GB)
-flux-klein|FLUX.2 Klein 4B BF16 (~7.75 GB)
-flux-dev|FLUX.2 Dev FP8 Mixed (~35.5 GB + dependencies)
-glm-image|GLM-Image BF16 Diffusers directory (~35.8 GB)
-qwen-edit|Qwen Image Edit 2511 BF16 (~40.9 GB + dependencies)
-qwen-edit-lightning|Qwen Image Edit 2511 Lightning LoRA (~850 MB)
-sam|SAM 3.1 Multiplex FP16 (~1.75 GB)
-seedvr|SeedVR2 7B Sharp FP16 (~16.5 GB)
-realesrgan|RealESRGAN x4plus (~67 MB)
-realesrgan-anime|RealESRGAN x4plus anime 6B (~18 MB)
-minimax|MiniMax H3 full T2V/I2V + reference (roughly ~42 GB + dependencies)
-minimax-turbo|MiniMax H3 Turbo v4 step600 EMA LoRA (roughly ~1 GB)
-minimax-gguf|MiniMax H3 GGUF low-memory set (roughly ~25 GB + VAEs)
-ltx-dev|LTX-2.3 dev BF16 (~46.1 GB + dependencies)
-ltx-distilled|LTX-2.3 distilled 1.1 BF16 (~46.1 GB + dependencies)
-ltx-lora|LTX-2.3 distilled LoRA (roughly ~7 GB)
-ltx-upscale|LTX-2.3 spatial x2 upscaler (~996 MB)
-ltx-dev-gguf|LTX-2.3 dev Q6_K (roughly ~18 GB + dependencies)
-ltx-distilled-gguf|LTX-2.3 distilled Q6_K (roughly ~18 GB + dependencies)
-hunyuan-t2v|HunyuanVideo 1.5 T2V 720p FP16 (~16.7 GB + dependencies)
-hunyuan-i2v|HunyuanVideo 1.5 I2V 720p FP16 (~16.7 GB + dependencies)
-hunyuan-upscale|HunyuanVideo 1.5 1080p upscale set (roughly ~17 GB)
-hunyuan-lora|HunyuanVideo 1.5 acceleration LoRA (roughly ~1 GB)
-wan-t2v|Wan 2.2 T2V high + low FP16 (~57.2 GB + dependencies)
-wan-i2v|Wan 2.2 I2V high + low FP16 (~57.2 GB + dependencies)
-wan-t2v-lightning|Wan 2.2 T2V Lightning LoRA pair (roughly ~2 GB)
-wan-i2v-lightning|Wan 2.2 I2V Lightning LoRA pair (roughly ~2 GB)
+qwen-image-21|image|Qwen Image 2.1 7B BF16 (~14.2 GB + dependencies)
+krea-turbo|image|Krea 2 Turbo BF16 (~26.3 GB + dependencies)
+qwen-image|image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
+qwen-lightning|image|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
+qwen-gguf|image|Qwen Image 2512 Q4_K_M (~13.2 GB + dependencies)
+anima|image|Anima Aesthetic v1.1 (~4.18 GB + dependencies)
+ideogram|image|Ideogram 4 FP8 (~9.28 GB conditional + unconditional/dependencies)
+z-image|image|Z-Image Turbo BF16 (~12.3 GB + dependencies)
+z-patch|image|Z-Image Turbo distillation patch (roughly ~1 GB)
+flux-klein|image|FLUX.2 Klein 4B BF16 (~7.75 GB)
+flux-dev|image|FLUX.2 Dev FP8 Mixed (~35.5 GB + dependencies)
+glm-image|image|GLM-Image BF16 Diffusers directory (~35.8 GB)
+qwen-edit|edit|Qwen Image Edit 2511 BF16 (~40.9 GB + dependencies)
+qwen-edit-lightning|edit|Qwen Image Edit 2511 Lightning LoRA (~850 MB)
+sam|segment|SAM 3.1 Multiplex FP16 (~1.75 GB)
+seedvr|upscale|SeedVR2 7B Sharp FP16 (~16.5 GB)
+realesrgan|upscale|RealESRGAN x4plus (~67 MB)
+realesrgan-anime|upscale|RealESRGAN x4plus anime 6B (~18 MB)
+minimax|video|MiniMax H3 full T2V/I2V + reference (roughly ~42 GB + dependencies)
+minimax-turbo|video|MiniMax H3 Turbo v4 step600 EMA LoRA (roughly ~1 GB)
+minimax-gguf|video|MiniMax H3 GGUF low-memory set (roughly ~25 GB + VAEs)
+ltx-dev|video|LTX-2.3 dev BF16 (~46.1 GB + dependencies)
+ltx-distilled|video|LTX-2.3 distilled 1.1 BF16 (~46.1 GB + dependencies)
+ltx-lora|video|LTX-2.3 distilled LoRA (roughly ~7 GB)
+ltx-upscale|video|LTX-2.3 spatial x2 upscaler (~996 MB)
+ltx-dev-gguf|video|LTX-2.3 dev Q6_K (roughly ~18 GB + dependencies)
+ltx-distilled-gguf|video|LTX-2.3 distilled Q6_K (roughly ~18 GB + dependencies)
+hunyuan-t2v|video|HunyuanVideo 1.5 T2V 720p FP16 (~16.7 GB + dependencies)
+hunyuan-i2v|video|HunyuanVideo 1.5 I2V 720p FP16 (~16.7 GB + dependencies)
+hunyuan-upscale|video|HunyuanVideo 1.5 1080p upscale set (roughly ~17 GB)
+hunyuan-lora|video|HunyuanVideo 1.5 acceleration LoRA (roughly ~1 GB)
+wan-t2v|video|Wan 2.2 T2V high + low FP16 (~57.2 GB + dependencies)
+wan-i2v|video|Wan 2.2 I2V high + low FP16 (~57.2 GB + dependencies)
+wan-t2v-lightning|video|Wan 2.2 T2V Lightning LoRA pair (roughly ~2 GB)
+wan-i2v-lightning|video|Wan 2.2 I2V Lightning LoRA pair (roughly ~2 GB)
 EOF
+}
+
+model_categories() {
+    cat <<'EOF'
+image|Image generation
+edit|Image editing
+segment|Segmentation / masking
+upscale|Upscaling & restoration
+video|Video generation
+EOF
+}
+
+catalog_entry() {
+    local want="$1" id category label
+    while IFS='|' read -r id category label; do
+        if [[ "${id}" == "${want}" ]]; then
+            printf '%s|%s|%s\n' "${id}" "${category}" "${label}"
+            return 0
+        fi
+    done < <(model_catalog)
+    return 1
+}
+
+catalog_label() {
+    local row
+    row="$(catalog_entry "$1")" || return 1
+    printf '%s\n' "${row##*|}"
+}
+
+category_title() {
+    local want="$1" key title
+    while IFS='|' read -r key title; do
+        if [[ "${key}" == "${want}" ]]; then
+            printf '%s\n' "${title}"
+            return 0
+        fi
+    done < <(model_categories)
+    return 1
+}
+
+nas_location() {
+    printf '//%s/%s/%s\n' "${COMFYUI_NAS_HOST}" "${COMFYUI_NAS_SHARE}" "${COMFYUI_NAS_SUBDIR}"
+}
+
+nas_remote_root() {
+    printf '%s\n' ":smb:${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}"
 }
 
 # Emit repo|source|destination relative to MODEL_DIR. Only the packaging prefix
@@ -353,6 +509,10 @@ qwen_dependencies() {
 model_manifest() {
     local id="$1" repo file mode variant
     case "${id}" in
+        qwen-image-21)
+            model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_bf16.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 text_encoders/qwen3vl_8b_bf16.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
         qwen-image|qwen-edit)
             if [[ "${id}" == qwen-image ]]; then
                 model_file Comfy-Org/Qwen-Image_ComfyUI split_files/diffusion_models/qwen_image_2512_bf16.safetensors
@@ -383,6 +543,10 @@ model_manifest() {
                 model_file Comfy-Org/z_image_turbo "split_files/${file}"
             done ;;
         z-patch) model_file Comfy-Org/z_image_turbo split_files/loras/z_image_turbo_distill_patch_lora_bf16.safetensors ;;
+        krea-turbo)
+            model_file Comfy-Org/Krea-2 diffusion_models/krea2_turbo_bf16.safetensors
+            model_file Comfy-Org/Krea-2 text_encoders/qwen3vl_4b_bf16.safetensors
+            model_file Comfy-Org/Krea-2 vae/qwen_image_vae.safetensors ;;
         flux-klein) model_file black-forest-labs/FLUX.2-klein-4B flux-2-klein-4b.safetensors diffusion_models/flux-2-klein-4b.safetensors ;;
         flux-dev)
             for file in diffusion_models/flux2_dev_fp8mixed.safetensors text_encoders/mistral_3_small_flux2_bf16.safetensors vae/flux2-vae.safetensors; do
@@ -439,42 +603,142 @@ model_manifest() {
 }
 
 hf_download() {
-    local -a env_args=(HF_XET_HIGH_PERFORMANCE=1)
+    # Do not use HF_XET_HIGH_PERFORMANCE: it sizes buffers for a 64 GB+ box
+    # and five of those jobs will OOM the machine. Keep a small reconstruction
+    # window so one download can still move, without eating tens of GB of RAM.
+    local -a env_args=(
+        HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT=2gb
+        HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_SIZE=512mb
+        HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_PERFILE_SIZE=256mb
+        HF_XET_DATA_MAX_CONCURRENT_FILE_DOWNLOADS=1
+        HF_XET_NUM_CONCURRENT_RANGE_GETS=8
+        HF_XET_CLIENT_NUM_CONCURRENT_RANGE_GETS=8
+        HF_HUB_DISABLE_PROGRESS_BARS=0
+        PYTHONUNBUFFERED=1
+    )
     [[ -n "${HF_TOKEN:-}" ]] && env_args+=("HF_TOKEN=${HF_TOKEN}")
-    env "${env_args[@]}" hf "$@"
+    # Presence of HF_XET_HIGH_PERFORMANCE enables huge buffers even when set to 0.
+    env -u HF_XET_HIGH_PERFORMANCE -u HF_XET_HP "${env_args[@]}" hf "$@"
+}
+
+# 400 Mbit/s -> 50 MB/s, split across jobs that are about to run.
+job_bwlimit() {
+    local n
+    n="$(running_job_lines | awk 'END { print NR+0 }')"
+    n=$((n + 1))
+    (( n < 1 )) && n=1
+    local mib=$((JOB_MAX_MBPS / 8 / n))
+    (( mib < 1 )) && mib=1
+    printf '%sM' "${mib}"
+}
+
+expect_bytes_from_label() {
+    local label="${1:-}" gb
+    if [[ "${label}" =~ ~([0-9]+(\.[0-9]+)?)[[:space:]]*GB ]]; then
+        gb="${BASH_REMATCH[1]}"
+        python3 -c "print(int(float('${gb}') * 1000000000))" 2>/dev/null || printf '0'
+    else
+        printf '0'
+    fi
+}
+
+watch_proc_bytes() {
+    local pid="$1"
+    python3 - "${pid}" <<'PY'
+import os, sys, time
+pid = int(sys.argv[1])
+
+def tree(root):
+    seen, stack = set(), [root]
+    while stack:
+        p = stack.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        task = f"/proc/{p}/task"
+        try:
+            for tid in os.listdir(task):
+                try:
+                    with open(f"{task}/{tid}/children", encoding="utf-8") as fh:
+                        stack.extend(int(x) for x in fh.read().split())
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return seen
+
+def wchar(pids):
+    total = 0
+    for p in pids:
+        try:
+            with open(f"/proc/{p}/io", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("wchar:"):
+                        total += int(line.split()[1])
+        except OSError:
+            pass
+    return total
+
+while os.path.exists(f"/proc/{pid}"):
+    print(f"PROGRESS bytes {wchar(tree(pid))}", flush=True)
+    time.sleep(2)
+PY
+}
+
+run_transfer_with_byte_progress() {
+    local child watcher status=0
+    "$@" &
+    child=$!
+    watch_proc_bytes "${child}" &
+    watcher=$!
+    wait "${child}" || status=$?
+    kill "${watcher}" 2>/dev/null || true
+    wait "${watcher}" 2>/dev/null || true
+    return "${status}"
 }
 
 download_model() {
-    local manifest repo source destination staged
+    local manifest repo source destination staged relative n=0 total_files=0 expect
     mkdir -p -- "${MODEL_DIR}" || return 1
     manifest="$(model_manifest "$1")" || return $?
+    expect="$(expect_bytes_from_label "$(catalog_label "$1" 2>/dev/null || true)")"
+    [[ "${expect}" != "0" ]] && log "PROGRESS expect ${expect}"
+    while IFS='|' read -r _ _ relative; do
+        [[ -n "${relative}" ]] || continue
+        total_files=$((total_files + 1))
+    done <<<"${manifest}"
     while IFS='|' read -r repo source destination; do
+        relative="${destination}"
         destination="${MODEL_DIR}/${destination}"
+        n=$((n + 1))
         mkdir -p -- "$(dirname -- "${destination}")" || return 1
         if [[ "${source}" == "*" ]]; then
             if [[ -d "${destination}" ]] && find "${destination}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+                log "PROGRESS skip ${n}/${total_files} ${relative} 0"
                 log "Reusing existing model directory: ${destination}"
                 continue
             fi
         elif [[ -f "${destination}" ]]; then
+            log "PROGRESS skip ${n}/${total_files} ${relative} 0"
             log "Reusing existing model file: ${destination}"
             continue
         fi
+        log "PROGRESS start ${n}/${total_files} ${relative} ${expect}"
         log "Downloading ${repo} ${source} -> ${destination}"
         if [[ "${repo}" == https://* ]]; then
             command -v curl >/dev/null 2>&1 || { warn 'curl is required for the official RealESRGAN releases.'; return 1; }
-            curl --fail --location --retry 3 --output "${destination}.partial" "${repo}" || return $?
+            run_transfer_with_byte_progress curl --fail --location --retry 3 --limit-rate "$(job_bwlimit)" --output "${destination}.partial" "${repo}" || return $?
             mv -f -- "${destination}.partial" "${destination}" || return $?
         else
             command -v hf >/dev/null 2>&1 || { warn 'hf is required on the host. Install the Hugging Face CLI, then retry (hf auth login for gated repositories).'; return 1; }
             if [[ "${source}" == '*' ]]; then
-                hf_download download "${repo}" --local-dir "${destination}" || return $?
+                run_transfer_with_byte_progress hf_download download "${repo}" --local-dir "${destination}" || return $?
             else
                 # Download into the shared root so hf's local-dir cache can
                 # resume an interrupted transfer without duplicating a huge
                 # model in a second staging directory. Move split_files assets
                 # into ComfyUI's destination layout only after hf completes.
-                hf_download download "${repo}" "${source}" --local-dir "${MODEL_DIR}" || return $?
+                run_transfer_with_byte_progress hf_download download "${repo}" "${source}" --local-dir "${MODEL_DIR}" || return $?
                 staged="${MODEL_DIR}/${source}"
                 [[ -f "${staged}" ]] || { warn "hf did not create the expected file: ${staged}"; return 1; }
                 if [[ "${staged}" != "${destination}" ]]; then
@@ -482,19 +746,20 @@ download_model() {
                 fi
             fi
         fi
+        log "PROGRESS done ${n}/${total_files} ${relative} ${expect}"
     done <<<"${manifest}"
     log "Download complete: $1"
 }
 
 rclone_smb() {
     local obscured
-    command -v rclone >/dev/null 2>&1 || { warn 'rclone is required for NAS downloads.'; return 1; }
+    command -v rclone >/dev/null 2>&1 || { warn 'rclone is required for NAS transfers.'; return 1; }
     obscured="$(RCLONE_CONFIG=/dev/null rclone obscure "${COMFYUI_NAS_PASSWORD}")" || return 1
     env RCLONE_CONFIG=/dev/null \
         RCLONE_SMB_HOST="${COMFYUI_NAS_HOST}" \
         RCLONE_SMB_USER="${COMFYUI_NAS_USER}" \
         RCLONE_SMB_PASS="${obscured}" \
-        rclone --contimeout 8s --timeout 30s "$@"
+        rclone --contimeout 8s --timeout 0 "$@"
 }
 
 nas_model_stat() {
@@ -515,7 +780,8 @@ nas_model_stat() {
 
 download_model_nas() {
     local manifest repo source relative remote destination size
-    local root=":smb:${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}"
+    local root
+    root="$(nas_remote_root)"
     local -A sizes=()
     manifest="$(model_manifest "$1")" || return $?
     command -v rclone >/dev/null 2>&1 || { warn 'rclone is required for NAS downloads.'; return 1; }
@@ -540,11 +806,11 @@ download_model_nas() {
         log "Copying NAS ${remote} -> ${destination}"
         if [[ "${source}" == '*' ]]; then
             # Copy directory contents recursively, preserving the Diffusers tree.
-            rclone_smb copy "${remote}" "${destination}" --size-only --retries 5 --low-level-retries 20 || return 1
+            rclone_smb copy "${remote}" "${destination}" --size-only --log-level INFO --stats 1s --stats-one-line --bwlimit "$(job_bwlimit)" --retries 5 --low-level-retries 20 || return 1
             rclone_smb check "${remote}" "${destination}" --size-only --one-way || return 1
             [[ -s "${destination}/model_index.json" ]] || { warn "Missing local Diffusers model_index.json: ${destination}"; return 1; }
         else
-            rclone_smb copyto "${remote}" "${destination}" --size-only --retries 5 --low-level-retries 20 || return 1
+            rclone_smb copyto "${remote}" "${destination}" --size-only --log-level INFO --stats 1s --stats-one-line --bwlimit "$(job_bwlimit)" --retries 5 --low-level-retries 20 || return 1
             size="$(stat -c %s -- "${destination}")" || return 1
             [[ -f "${destination}" && "${size}" == "${sizes[${relative}]}" ]] || {
                 warn "NAS file size verification failed: ${destination}"; return 1;
@@ -554,23 +820,900 @@ download_model_nas() {
     log "NAS download complete: $1"
 }
 
-download_model_menu() {
-    local id label choice source
-    local -a options=()
-    [[ -t 0 ]] || { warn 'Use list-models, model-files ID, download-model ID, or download-model-nas ID without a terminal.'; return 1; }
-    while IFS='|' read -r id label; do options+=("${id}: ${label}"); done < <(model_catalog)
-    while true; do
-        choice="$(choose "ComfyUI downloads -> ${MODEL_DIR} (sizes approximate; dependencies extra)" "${options[@]}" Back)" || return 0
-        [[ -n "${choice}" && "${choice}" != Back ]] || return 0
-        source="$(choose 'Download source' 'Hugging Face' NAS Back)" || continue
-        case "${source}" in
-            'Hugging Face')
-                if ! download_model "${choice%%:*}"; then warn 'Download failed; retry to reuse the Hugging Face cache.'; fi ;;
-            NAS)
-                if ! download_model_nas "${choice%%:*}"; then warn 'NAS download failed; check the error above and retry.'; fi ;;
-            *) continue ;;
+model_item_present() {
+    local source="$1"
+    local relative="$2"
+    local path="${MODEL_DIR}/${relative}"
+    if [[ "${source}" == '*' ]]; then
+        [[ -d "${path}" && -s "${path}/model_index.json" ]]
+    else
+        [[ -f "${path}" && -s "${path}" ]]
+    fi
+}
+
+# stdout: status present total
+model_status() {
+    local id="$1" source dest present=0 total=0 status
+    local manifest
+    manifest="$(model_manifest "${id}")" || return $?
+    while IFS='|' read -r _ source dest; do
+        [[ -n "${dest}" ]] || continue
+        total=$((total + 1))
+        if model_item_present "${source}" "${dest}"; then
+            present=$((present + 1))
+        fi
+    done <<<"${manifest}"
+    if (( total == 0 )); then
+        status=unknown
+    elif (( present == 0 )); then
+        status=missing
+    elif (( present == total )); then
+        status=complete
+    else
+        status=partial
+    fi
+    printf '%s %s %s\n' "${status}" "${present}" "${total}"
+}
+
+# Short disk/NAS cell: yes, 2/3, no, or ?
+status_cell() {
+    local status="$1"
+    local present="$2"
+    local total="$3"
+    case "${status}" in
+        complete) printf 'yes' ;;
+        partial) printf '%s/%s' "${present}" "${total}" ;;
+        unknown) printf '?' ;;
+        *) printf 'no' ;;
+    esac
+}
+
+# Back-compat name used by a few callers.
+status_prefix() {
+    status_cell "$@"
+}
+
+status_color() {
+    case "$1" in
+        complete) printf '%s' "${c_green}" ;;
+        partial) printf '%s' "${c_yellow}" ;;
+        *) printf '%s' "${c_dim}" ;;
+    esac
+}
+
+short_label() {
+    local label="$1"
+    printf '%s' "${label%% (*}"
+}
+
+show_model_files() {
+    local id="$1" repo source dest mark status present total label prefix color
+    label="$(catalog_label "${id}" 2>/dev/null || printf '%s' "${id}")"
+    read -r status present total < <(model_status "${id}") || return $?
+    prefix="$(status_prefix "${status}" "${present}" "${total}")"
+    color="$(status_color "${status}")"
+    printf '%s%s%s  %s%s%s  %s/%s files\n' \
+        "${c_bold}" "${label}" "${c_reset}" "${color}" "${prefix}" "${c_reset}" "${present}" "${total}"
+    printf '%s%s%s\n' "${c_dim}" "${MODEL_DIR}" "${c_reset}"
+    while IFS='|' read -r repo source dest; do
+        [[ -n "${dest}" ]] || continue
+        if model_item_present "${source}" "${dest}"; then
+            printf '  %syes%s  %s\n' "${c_green}" "${c_reset}" "${dest}"
+        else
+            printf '  %sno%s   %s\n' "${c_dim}" "${c_reset}" "${dest}"
+        fi
+    done < <(model_manifest "${id}")
+}
+
+print_model_status() {
+    local filter="${1:-}" id category label status present total prefix color
+    local nas_status nas_present nas_total nas
+    local downloaded=0 partial=0 missing=0
+    printf '%sdisk%s=this PC   %sNAS%s=%s\n' \
+        "${c_green}" "${c_reset}" "${c_cyan}" "${c_reset}" "$(nas_location)"
+    printf '%syes / 2/3 / no / ?%s\n' "${c_dim}" "${c_reset}"
+    printf '%s%s%s\n' "${c_dim}" "${MODEL_DIR}" "${c_reset}"
+    printf '%-8s %-8s %-22s %s\n' 'DISK' 'NAS' 'ID' 'MODEL'
+    while IFS='|' read -r id category label; do
+        [[ -z "${filter}" || "${filter}" == "${id}" || "${filter}" == "${category}" ]] || continue
+        read -r status present total < <(model_status "${id}") || continue
+        read -r nas_status nas_present nas_total < <(nas_model_status "${id}") || nas_status=unknown
+        prefix="$(status_cell "${status}" "${present}" "${total}")"
+        nas="$(status_cell "${nas_status}" "${nas_present}" "${nas_total}")"
+        color="$(status_color "${status}")"
+        printf '%s%-8s%s %-8s %-22s %s\n' "${color}" "${prefix}" "${c_reset}" "${nas}" "${id}" "$(short_label "${label}")"
+        case "${status}" in
+            complete) downloaded=$((downloaded + 1)) ;;
+            partial) partial=$((partial + 1)) ;;
+            *) missing=$((missing + 1)) ;;
         esac
-        pause_menu || return 0
+    done < <(model_catalog)
+    printf '%sdisk yes=%s  partial=%s  missing=%s%s\n' "${c_dim}" "${downloaded}" "${partial}" "${missing}" "${c_reset}"
+}
+
+count_model_status() {
+    local downloaded=0 partial=0 missing=0 id status present total
+    while IFS='|' read -r id _ _; do
+        read -r status present total < <(model_status "${id}") || continue
+        case "${status}" in
+            complete) downloaded=$((downloaded + 1)) ;;
+            partial) partial=$((partial + 1)) ;;
+            *) missing=$((missing + 1)) ;;
+        esac
+    done < <(model_catalog)
+    printf '%s %s %s\n' "${downloaded}" "${partial}" "${missing}"
+}
+
+run_catalog_job() {
+    local kind="$1" id="$2"
+    case "${kind}" in
+        hf) download_model "${id}" ;;
+        nas) download_model_nas "${id}" ;;
+        upload)
+            if [[ "${id}" == _all ]]; then
+                upload_downloaded_models
+            else
+                upload_model "${id}"
+            fi
+            ;;
+        *) return 2 ;;
+    esac
+}
+
+job_stem() {
+    printf '%s.%s' "$1" "$2"
+}
+
+job_pidfile() { printf '%s/%s.pid' "${JOB_ROOT}" "$(job_stem "$1" "$2")"; }
+job_logfile() { printf '%s/%s.log' "${JOB_ROOT}" "$(job_stem "$1" "$2")"; }
+job_exitfile() { printf '%s/%s.exit' "${JOB_ROOT}" "$(job_stem "$1" "$2")"; }
+
+job_pid_alive() {
+    local pid="$1"
+    [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null
+}
+
+job_is_running() {
+    local kind="$1" id="$2" pidfile pid
+    pidfile="$(job_pidfile "${kind}" "${id}")"
+    [[ -f "${pidfile}" ]] || return 1
+    pid="$(<"${pidfile}")"
+    job_pid_alive "${pid}"
+}
+
+model_has_running_job() {
+    local id="$1" kind
+    for kind in hf nas upload; do
+        job_is_running "${kind}" "${id}" && return 0
+    done
+    return 1
+}
+
+iter_job_stems() {
+    local file stem
+    local -A seen=()
+    [[ -d "${JOB_ROOT}" ]] || return 0
+    for file in "${JOB_ROOT}"/*.pid "${JOB_ROOT}"/*.queued; do
+        [[ -f "${file}" ]] || continue
+        stem="${file##*/}"
+        stem="${stem%.pid}"
+        stem="${stem%.queued}"
+        [[ -n "${seen[${stem}]:-}" ]] && continue
+        seen["${stem}"]=1
+        printf '%s\n' "${stem}"
+    done
+}
+
+running_job_lines() {
+    local stem kind id pid
+    while IFS= read -r stem; do
+        [[ -n "${stem}" ]] || continue
+        kind="${stem%%.*}"
+        id="${stem#*.}"
+        job_is_running "${kind}" "${id}" || continue
+        pid="$(<"$(job_pidfile "${kind}" "${id}")")"
+        printf '%s %s %s\n' "${kind}" "${id}" "${pid}"
+    done < <(iter_job_stems)
+}
+
+job_queued_file() { printf '%s/%s.queued' "${JOB_ROOT}" "$(job_stem "$1" "$2")"; }
+
+count_running_kind() {
+    local want="$1" kind id pid n=0
+    while read -r kind id pid; do
+        [[ "${kind}" == "${want}" ]] || continue
+        n=$((n + 1))
+    done < <(running_job_lines)
+    printf '%s\n' "${n}"
+}
+
+count_running_jobs() {
+    running_job_lines | awk 'END { print NR+0 }'
+}
+
+launch_job_backend() {
+    local kind="$1" id="$2" pidfile logfile exitfile pid
+    pidfile="$(job_pidfile "${kind}" "${id}")"
+    logfile="$(job_logfile "${kind}" "${id}")"
+    exitfile="$(job_exitfile "${kind}" "${id}")"
+    rm -f -- "${exitfile}"
+    [[ -f "${logfile}" ]] || : >"${logfile}"
+    if [[ "${0##*/}" == vimmite-strix-halo-comfyui ]] && command -v setsid >/dev/null 2>&1; then
+        setsid "$0" _run-job "${kind}" "${id}" </dev/null >/dev/null 2>&1 &
+        pid=$!
+    else
+        (
+            trap '' HUP INT
+            set +e
+            run_catalog_job "${kind}" "${id}"
+            printf '%s\n' "$?" >"${exitfile}"
+            dispatch_jobs
+        ) >>"${logfile}" 2>&1 &
+        pid=$!
+    fi
+    printf '%s\n' "${pid}" >"${pidfile}"
+    disown "${pid}" 2>/dev/null || true
+    printf '%s\n' "${pid}"
+}
+
+next_queued_job() {
+    local queued stem kind id hf_running
+    hf_running="$(count_running_kind hf)"
+    [[ -d "${JOB_ROOT}" ]] || return 1
+    for queued in "${JOB_ROOT}"/*.queued; do
+        [[ -f "${queued}" ]] || continue
+        stem="${queued##*/}"
+        stem="${stem%.queued}"
+        kind="${stem%%.*}"
+        id="${stem#*.}"
+        if [[ "${kind}" == hf ]] && (( hf_running >= JOB_MAX_HF )); then
+            continue
+        fi
+        printf '%s %s\n' "${kind}" "${id}"
+        return 0
+    done
+    return 1
+}
+
+dispatch_jobs() {
+    local kind id queued lock lockfd
+    mkdir -p -- "${JOB_ROOT}" || return 1
+    lock="${JOB_ROOT}/dispatch.lock"
+    exec {lockfd}>"${lock}" || return 1
+    if ! flock -n "${lockfd}"; then
+        exec {lockfd}>&-
+        return 0
+    fi
+    while (( "$(count_running_jobs)" < JOB_MAX_RUNNING )); do
+        read -r kind id < <(next_queued_job) || break
+        [[ -n "${kind}" && -n "${id}" ]] || break
+        queued="$(job_queued_file "${kind}" "${id}")"
+        rm -f -- "${queued}"
+        launch_job_backend "${kind}" "${id}" >/dev/null
+        log "Running ${kind} ${id}  (cap ${JOB_MAX_RUNNING} jobs, ${JOB_MAX_MBPS} Mbps shared, ${JOB_MAX_HF} Hugging Face at a time)"
+    done
+    flock -u "${lockfd}" || true
+    exec {lockfd}>&-
+}
+
+queue_job() {
+    local id="$1" kind="$2" logfile queued
+    if [[ "${id}" != _all ]]; then
+        catalog_entry "${id}" >/dev/null || { warn "Unknown model ID: ${id}"; return 2; }
+    fi
+    mkdir -p -- "${JOB_ROOT}" || return 1
+    if model_has_running_job "${id}" || [[ -f "$(job_queued_file "${kind}" "${id}")" ]]; then
+        warn "${id} is already queued or running. Pick another model."
+        return 0
+    fi
+    logfile="$(job_logfile "${kind}" "${id}")"
+    queued="$(job_queued_file "${kind}" "${id}")"
+    : >"${logfile}"
+    : >"${queued}"
+    printf '%sQueued %s %s%s  at most %s running, Hugging Face one at a time, %s Mbps shared.\n' \
+        "${c_cyan}" "${kind}" "${id}" "${c_reset}" "${JOB_MAX_RUNNING}" "${JOB_MAX_MBPS}"
+    printf '%sLeave the menu anytime; jobs keep running. Percents are at the top.%s\n' "${c_dim}" "${c_reset}"
+    dispatch_jobs
+}
+
+job_progress() {
+    local kind="$1" id="$2" logfile total="${3:-}"
+    logfile="$(job_logfile "${kind}" "${id}")"
+    [[ -f "${logfile}" ]] || { printf 'starting'; return 0; }
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "${logfile}" "${total}" <<'PY'
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+total = sys.argv[2] if len(sys.argv) > 2 else ''
+raw = path.read_bytes().replace(b'\r', b'\n')
+raw = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', raw)
+text = raw.decode('utf-8', 'replace')
+starts = re.findall(r'^PROGRESS start (\d+)/(\d+) ', text, re.M)
+dones = re.findall(r'^PROGRESS done (\d+)/(\d+) ', text, re.M)
+skips = re.findall(r'^PROGRESS skip (\d+)/(\d+) ', text, re.M)
+expects = [int(x) for x in re.findall(r'^PROGRESS expect (\d+)', text, re.M)]
+byte_samples = [int(x) for x in re.findall(r'^PROGRESS bytes (\d+)', text, re.M)]
+hf_done = len(re.findall(
+    r'(?:✓ Downloaded|Reusing existing model|NAS download complete|NAS upload complete)',
+    text,
+))
+complete = max(len(dones) + len(skips), hf_done if not starts else 0)
+try:
+    total_n = int(total) if total else 0
+except ValueError:
+    total_n = 0
+if starts:
+    total_n = max(total_n, int(starts[-1][1]))
+pcts = [int(x) for x in re.findall(r',\s*(\d{1,3})%', text) if int(x) <= 100]
+if not pcts:
+    pcts = [int(x) for x in re.findall(r'\b(\d{1,3})\s*%', text) if int(x) <= 100]
+pct = pcts[-1] if pcts else None
+if pct is None and expects and byte_samples and expects[-1] > 0:
+    pct = min(99, int(byte_samples[-1] * 100 / expects[-1]))
+sizes = re.findall(
+    r'([\d.]+\s*[KMGT]i?B)\s*/\s*([\d.]+\s*[KMGT]i?B)',
+    text,
+    flags=re.I,
+)
+size = f'{sizes[-1][0]}/{sizes[-1][1]}'.replace(' ', '') if sizes else ''
+if byte_samples and not size:
+    size = f'{byte_samples[-1] / 1000000:.0f}MB'
+parts = []
+in_flight = 1 if starts and len(dones) + len(skips) < len(starts) else 0
+if total_n > 0:
+    frac = (pct / 100.0) if (pct is not None and in_flight) else 0.0
+    overall = int(min(100, (complete + frac) / total_n * 100))
+    parts.append(f'{overall}%')
+    parts.append(f'{complete}/{total_n}')
+elif pct is not None:
+    parts.append(f'{pct}%')
+if size:
+    parts.append(size)
+if not parts:
+    if 'Downloading' in text or 'Uploading' in text or 'Transferred' in text or starts:
+        parts.append('working')
+    else:
+        parts.append('starting')
+print(' '.join(parts))
+PY
+        return 0
+    fi
+    printf 'downloading'
+}
+
+print_jobs_brief() {
+    local kind id pid total progress queued stem
+    while read -r kind id pid; do
+        [[ -n "${kind}" ]] || continue
+        total=""
+        read -r _ _ total < <(model_status "${id}" 2>/dev/null) || total=""
+        progress="$(job_progress "${kind}" "${id}" "${total}")"
+        printf '  %s●%s %s  %s' "${c_cyan}" "${c_reset}" "${id}" "${c_bold}${c_cyan}"
+        printf '%s' "${progress}"
+        printf '%s  %s\n' "${c_reset}" "${kind}"
+    done < <(running_job_lines)
+    for queued in "${JOB_ROOT}"/*.queued; do
+        [[ -f "${queued}" ]] || continue
+        stem="${queued##*/}"
+        stem="${stem%.queued}"
+        printf '  %s○%s %s  waiting  %s\n' "${c_dim}" "${c_reset}" "${stem#*.}" "${stem%%.*}"
+    done
+}
+
+nas_cache_age() {
+    local now scanned elapsed
+    [[ -f "${NAS_STAMP}" && -f "${NAS_INDEX}" ]] || return 1
+    now="$(date +%s)"
+    scanned="$(<"${NAS_STAMP}")"
+    [[ "${scanned}" =~ ^[0-9]+$ ]] || return 1
+    elapsed=$((now - scanned))
+    if (( elapsed < 60 )); then
+        printf '%ss ago' "${elapsed}"
+    elif (( elapsed < 3600 )); then
+        printf '%sm ago' "$((elapsed / 60))"
+    else
+        printf '%sh ago' "$((elapsed / 3600))"
+    fi
+}
+
+print_compact_header() {
+    local downloaded partial missing running=0 nas_age
+    read -r downloaded partial missing < <(count_model_status)
+    running="$(running_job_lines | awk 'END { print NR+0 }')"
+    printf '%s%sComfyUI models%s  %s%s%s\n' "${c_bold}" "${c_cyan}" "${c_reset}" "${c_dim}" "${MODEL_DIR}" "${c_reset}"
+    printf '%sdisk%s %syes%s %s  %spartial%s %s  %smissing%s %s' \
+        "${c_bold}" "${c_reset}" "${c_green}" "${c_reset}" "${downloaded}" \
+        "${c_yellow}" "${c_reset}" "${partial}" \
+        "${c_dim}" "${c_reset}" "${missing}"
+    if (( running > 0 )); then
+        printf '  %sjobs%s %s' "${c_cyan}" "${c_reset}" "${running}"
+    fi
+    printf '\n'
+    printf '%smax %s running, 1 Hugging Face, %s Mbps shared%s\n' \
+        "${c_dim}" "${JOB_MAX_RUNNING}" "${JOB_MAX_MBPS}" "${c_reset}"
+    if nas_age="$(nas_cache_age)"; then
+        printf '%sNAS%s %s  scanned %s\n' "${c_cyan}" "${c_reset}" "$(nas_location)" "${nas_age}"
+    else
+        printf '%sNAS%s not scanned yet  ·  Scan NAS in this menu\n' "${c_dim}" "${c_reset}"
+    fi
+    print_jobs_brief
+}
+
+warn_jobs_on_leave() {
+    local running
+    running="$(running_job_lines | awk 'END { print NR+0 }')"
+    (( running > 0 )) || return 0
+    printf '\n%s%s download(s) still running after you leave this menu.%s\n' \
+        "${c_yellow}" "${running}" "${c_reset}"
+    print_jobs_brief
+    printf '%sThey keep going in the background. Check them with:%s\n' "${c_dim}" "${c_reset}"
+    printf '  %s list-models   or   download-jobs%s\n' "$0" "${c_reset}"
+}
+
+redraw_menu() {
+    [[ -t 1 ]] || return 0
+    clear 2>/dev/null || true
+}
+
+job_state() {
+    local kind="$1" id="$2" pidfile exitfile pid
+    pidfile="$(job_pidfile "${kind}" "${id}")"
+    exitfile="$(job_exitfile "${kind}" "${id}")"
+    if job_is_running "${kind}" "${id}"; then
+        printf 'running'
+        return
+    fi
+    if [[ -f "$(job_queued_file "${kind}" "${id}")" ]]; then
+        printf 'waiting'
+        return
+    fi
+    if [[ -f "${exitfile}" ]]; then
+        if [[ "$(<"${exitfile}")" == "0" ]]; then
+            printf 'done'
+        else
+            printf 'failed'
+        fi
+        return
+    fi
+    if [[ -f "${pidfile}" ]]; then
+        pid="$(<"${pidfile}")"
+        if job_pid_alive "${pid}"; then
+            printf 'running'
+        else
+            printf 'stale'
+        fi
+        return
+    fi
+    printf 'none'
+}
+
+print_jobs_table() {
+    local stem kind id state color total progress
+    printf '%sDownloads%s  %s%s%s\n' "${c_bold}" "${c_reset}" "${c_dim}" "${JOB_ROOT}" "${c_reset}"
+    if [[ ! -d "${JOB_ROOT}" ]] || ! compgen -G "${JOB_ROOT}/*.pid" >/dev/null; then
+        printf '%sNo jobs yet. Start one from a model, then come back here.%s\n' "${c_dim}" "${c_reset}"
+        return 0
+    fi
+    printf '%-8s %-8s %-22s %s\n' 'STATE' 'SOURCE' 'ID' 'PROGRESS'
+    while IFS= read -r stem; do
+        [[ -n "${stem}" ]] || continue
+        kind="${stem%%.*}"
+        id="${stem#*.}"
+        state="$(job_state "${kind}" "${id}")"
+        total=""
+        read -r _ _ total < <(model_status "${id}" 2>/dev/null) || total=""
+        if [[ "${state}" == running ]]; then
+            progress="$(job_progress "${kind}" "${id}" "${total}")"
+        elif [[ "${state}" == waiting ]]; then
+            progress="waiting"
+        else
+            progress=""
+        fi
+        case "${state}" in
+            running) color="${c_cyan}" ;;
+            waiting) color="${c_yellow}" ;;
+            done) color="${c_green}" ;;
+            failed) color="${c_red}" ;;
+            *) color="${c_dim}" ;;
+        esac
+        printf '%s%-8s%s %-8s %-22s ' "${color}" "${state}" "${c_reset}" "${kind}" "${id}"
+        printf '%s\n' "${progress}"
+    done < <(iter_job_stems)
+}
+
+show_job_log() {
+    local kind="$1" id="$2" logfile
+    logfile="$(job_logfile "${kind}" "${id}")"
+    if [[ ! -f "${logfile}" ]]; then
+        warn "No log for ${kind} ${id}"
+        return 0
+    fi
+    printf '%s--- %s %s ---%s\n' "${c_dim}" "${kind}" "${id}" "${c_reset}"
+    printf '%s' "${c_cyan}"
+    printf '%s' "$(job_progress "${kind}" "${id}")"
+    printf '%s\n' "${c_reset}"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "${logfile}" <<'PY' | tail -n 40
+import re, sys
+from pathlib import Path
+raw = Path(sys.argv[1]).read_bytes().replace(b'\r', b'\n')
+raw = re.sub(rb'\x1b\[[0-9;?]*[ -/]*[@-~]', b'', raw)
+print(raw.decode('utf-8', 'replace'), end='')
+PY
+    else
+        tail -n 40 -- "${logfile}" || true
+    fi
+}
+
+stop_job() {
+    local kind="$1" id="$2" pidfile pid
+    pidfile="$(job_pidfile "${kind}" "${id}")"
+    [[ -f "${pidfile}" ]] || { warn "No job for ${kind} ${id}"; return 0; }
+    pid="$(<"${pidfile}")"
+    if job_pid_alive "${pid}"; then
+        kill -- -"${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
+        sleep 0.2
+        if job_pid_alive "${pid}"; then
+            kill -9 -- -"${pid}" 2>/dev/null || kill -9 "${pid}" 2>/dev/null || true
+        fi
+        printf '%sStopped %s %s%s\n' "${c_yellow}" "${kind}" "${id}" "${c_reset}"
+    else
+        log "${kind} ${id} is not running."
+    fi
+}
+
+clear_finished_jobs() {
+    local stem kind id state
+    while IFS= read -r stem; do
+        [[ -n "${stem}" ]] || continue
+        kind="${stem%%.*}"
+        id="${stem#*.}"
+        state="$(job_state "${kind}" "${id}")"
+        [[ "${state}" == running ]] && continue
+        rm -f -- "$(job_pidfile "${kind}" "${id}")" "$(job_logfile "${kind}" "${id}")" "$(job_exitfile "${kind}" "${id}")"
+    done < <(iter_job_stems)
+    log "Cleared finished download records."
+}
+
+require_nas() {
+    command -v rclone >/dev/null 2>&1 || { warn 'rclone is required for NAS transfers.'; return 1; }
+    command -v jq >/dev/null 2>&1 || { warn 'jq is required to validate NAS model metadata.'; return 1; }
+    if ! rclone_smb lsd ":smb:${COMFYUI_NAS_SHARE}" >/dev/null; then
+        warn "NAS share is unreachable: $(nas_location). Check COMFYUI_NAS_HOST/SHARE/USER/PASSWORD."
+        return 1
+    fi
+}
+
+nas_item_present() {
+    local source="$1" relative="$2"
+    [[ -f "${NAS_INDEX}" ]] || return 1
+    if [[ "${source}" == '*' ]]; then
+        grep -q -- "^${relative}/model_index.json$" "${NAS_INDEX}" \
+            || grep -q -- "^${relative}/" "${NAS_INDEX}"
+    else
+        grep -Fxq -- "${relative}" "${NAS_INDEX}"
+    fi
+}
+
+nas_model_status() {
+    local id="$1" source dest present=0 total=0 status
+    local manifest
+    if [[ ! -f "${NAS_INDEX}" ]]; then
+        printf 'unknown 0 0\n'
+        return 0
+    fi
+    manifest="$(model_manifest "${id}")" || return $?
+    while IFS='|' read -r _ source dest; do
+        [[ -n "${dest}" ]] || continue
+        total=$((total + 1))
+        if nas_item_present "${source}" "${dest}"; then
+            present=$((present + 1))
+        fi
+    done <<<"${manifest}"
+    if (( total == 0 )); then
+        status=unknown
+    elif (( present == 0 )); then
+        status=missing
+    elif (( present == total )); then
+        status=complete
+    else
+        status=partial
+    fi
+    printf '%s %s %s\n' "${status}" "${present}" "${total}"
+}
+
+nas_tag() {
+    status_cell "${1}" "${2:-0}" "${3:-0}"
+}
+
+scan_nas_index() {
+    local tmp
+    mkdir -p -- "$(dirname -- "${NAS_INDEX}")" || return 1
+    require_nas || return 1
+    tmp="${NAS_INDEX}.tmp"
+    log "Scanning $(nas_location) ..."
+    if ! rclone_smb lsf "$(nas_remote_root)" --recursive --files-only >"${tmp}"; then
+        rm -f -- "${tmp}"
+        warn "NAS scan failed."
+        return 1
+    fi
+    mv -f -- "${tmp}" "${NAS_INDEX}"
+    date +%s >"${NAS_STAMP}"
+    log "NAS scan complete: $(wc -l <"${NAS_INDEX}") files indexed."
+}
+
+maybe_offer_nas_scan() {
+    local choice
+    [[ -t 0 ]] || return 0
+    [[ ! -f "${NAS_INDEX}" ]] || return 0
+    choice="$(choose "Scan $(nas_location) so the menu can mark what is already on the NAS?" \
+        "Scan NAS now" \
+        "Not now")" || return 0
+    case "${choice}" in
+        "Scan NAS now") scan_nas_index ;;
+    esac
+}
+
+upload_model() {
+    local manifest repo source relative remote destination size remote_size copied=0 skipped=0
+    local root total_files=0 n=0
+    root="$(nas_remote_root)"
+    mkdir -p -- "${MODEL_DIR}" || return 1
+    manifest="$(model_manifest "$1")" || return $?
+    require_nas || return 1
+    while IFS='|' read -r _ _ relative; do
+        [[ -n "${relative}" ]] || continue
+        total_files=$((total_files + 1))
+    done <<<"${manifest}"
+    while IFS='|' read -r repo source relative; do
+        destination="${MODEL_DIR}/${relative}"
+        remote="${root}/${relative}"
+        n=$((n + 1))
+        if ! model_item_present "${source}" "${relative}"; then
+            log "PROGRESS skip ${n}/${total_files} ${relative} 0"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        size="$(stat -c %s -- "${destination}" 2>/dev/null || printf '0')"
+        log "PROGRESS start ${n}/${total_files} ${relative} ${size}"
+        log "Uploading ${destination} -> ${remote}"
+        if [[ "${source}" == '*' ]]; then
+            rclone_smb copy "${destination}" "${remote}" --size-only --log-level INFO --stats 1s --stats-one-line --bwlimit "$(job_bwlimit)" --retries 5 --low-level-retries 20 || return 1
+            rclone_smb check "${destination}" "${remote}" --size-only --one-way || return 1
+        else
+            rclone_smb copyto "${destination}" "${remote}" --size-only --log-level INFO --stats 1s --stats-one-line --bwlimit "$(job_bwlimit)" --retries 5 --low-level-retries 20 || return 1
+            remote_size="$(nas_model_stat "${remote}" file)" || return 1
+            [[ "${size}" == "${remote_size}" ]] || {
+                warn "NAS upload size verification failed: ${relative}"; return 1;
+            }
+        fi
+        log "PROGRESS done ${n}/${total_files} ${relative} ${size}"
+        copied=$((copied + 1))
+    done <<<"${manifest}"
+    if (( copied == 0 )); then
+        warn "Nothing local to upload for $1. Download it first."
+        return 1
+    fi
+    log "NAS upload complete: $1 (${copied} copied, ${skipped} skipped) -> $(nas_location)"
+}
+
+upload_downloaded_models() {
+    local id status present total copied=0 failed=0
+    require_nas || return 1
+    while IFS='|' read -r id _ _; do
+        read -r status present total < <(model_status "${id}") || continue
+        (( present > 0 )) || continue
+        if upload_model "${id}"; then
+            copied=$((copied + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    done < <(model_catalog)
+    if (( copied == 0 && failed == 0 )); then
+        warn "No local catalog files to upload from ${MODEL_DIR}."
+        return 1
+    fi
+    log "NAS upload finished: ${copied} bundle(s) copied, ${failed} failed -> $(nas_location)"
+    (( failed == 0 ))
+}
+
+parse_model_choice() {
+    local choice="$1" rest
+    [[ "${choice}" == Back || -z "${choice}" ]] && return 1
+    rest="${choice%%:*}"
+    rest="${rest##* }"
+    [[ -n "${rest}" ]] || return 1
+    printf '%s\n' "${rest}"
+}
+
+parse_job_choice() {
+    local choice="$1" rest kind id
+    rest="${choice##* }"
+    kind="${rest%%:*}"
+    id="${rest#*:}"
+    [[ -n "${kind}" && -n "${id}" && "${kind}" != "${id}" ]] || return 1
+    printf '%s %s\n' "${kind}" "${id}"
+}
+
+model_option_line() {
+    local id="$1" status present total label disk nas nas_status nas_present nas_total extra=''
+    label="$(catalog_label "${id}")" || return 1
+    read -r status present total < <(model_status "${id}") || return $?
+    read -r nas_status nas_present nas_total < <(nas_model_status "${id}") || nas_status=unknown
+    disk="$(status_cell "${status}" "${present}" "${total}")"
+    nas="$(status_cell "${nas_status}" "${nas_present}" "${nas_total}")"
+    if model_has_running_job "${id}"; then
+        extra='  job'
+    fi
+    # Never put '%' in ugum/gum choices; it is parsed as a printf format.
+    printf 'disk=%-5s NAS=%-5s %s: %s%s\n' "${disk}" "${nas}" "${id}" "$(short_label "${label}")" "${extra}"
+}
+
+model_action_menu() {
+    local id="$1" choice label status present total prefix nas_status nas_present nas_total
+    catalog_entry "${id}" >/dev/null || { warn "Unknown model ID: ${id}"; return 2; }
+    label="$(catalog_label "${id}")"
+    while true; do
+        redraw_menu
+        print_compact_header
+        read -r status present total < <(model_status "${id}") || return $?
+        prefix="$(status_cell "${status}" "${present}" "${total}")"
+        printf '\n%s%s%s\n' "${c_bold}" "$(short_label "${label}")" "${c_reset}"
+        printf '  disk %s%s%s  %s/%s files\n' "$(status_color "${status}")" "${prefix}" "${c_reset}" "${present}" "${total}"
+        read -r nas_status nas_present nas_total < <(nas_model_status "${id}") || nas_status=unknown
+        printf '  NAS  %s%s%s\n' "${c_cyan}" "$(status_cell "${nas_status}" "${nas_present}" "${nas_total}")" "${c_reset}"
+        if model_has_running_job "${id}"; then
+            printf '%salready running in the background%s\n' "${c_cyan}" "${c_reset}"
+        fi
+        choice="$(choose "${id}" \
+            "Download from Hugging Face" \
+            "Download from NAS" \
+            "Upload to NAS" \
+            "Show files" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Download from Hugging Face")
+                queue_job "${id}" hf
+                return 0 ;;
+            "Download from NAS")
+                queue_job "${id}" nas
+                return 0 ;;
+            "Upload to NAS")
+                queue_job "${id}" upload
+                return 0 ;;
+            "Show files")
+                show_model_files "${id}"
+                pause_menu || return 0 ;;
+            *) return 0 ;;
+        esac
+    done
+}
+
+model_category_menu() {
+    local category="$1" title choice id entry_id entry_category
+    local -a options=()
+    title="$(category_title "${category}")" || title="${category}"
+    while true; do
+        options=()
+        redraw_menu
+        print_compact_header
+        while IFS='|' read -r entry_id entry_category _; do
+            [[ "${entry_category}" == "${category}" ]] || continue
+            options+=("$(model_option_line "${entry_id}")")
+        done < <(model_catalog)
+        choice="$(choose "${title}  disk=this PC  NAS=foxraid  percents at top" \
+            "${options[@]}" Back)" || return 0
+        id="$(parse_model_choice "${choice}")" || return 0
+        model_action_menu "${id}"
+    done
+}
+
+upload_downloaded_menu() {
+    local choice id
+    local -a options=()
+    while IFS='|' read -r id _ _; do
+        read -r _ present _ < <(model_status "${id}") || continue
+        (( present > 0 )) || continue
+        options+=("$(model_option_line "${id}")")
+    done < <(model_catalog)
+    if (( ${#options[@]} == 0 )); then
+        warn "No local catalog files to upload from ${MODEL_DIR}."
+        return 0
+    fi
+    choice="$(choose "Upload to $(nas_location)  (background)" \
+        "All downloaded / partial models" "${options[@]}" Back)" || return 0
+    case "${choice}" in
+        "All downloaded / partial models")
+            queue_job _all upload
+            return 0 ;;
+        Back|'') return 0 ;;
+        *)
+            id="$(parse_model_choice "${choice}")" || return 0
+            queue_job "${id}" upload ;;
+    esac
+}
+
+jobs_menu() {
+    local choice stem kind id state
+    local -a options=()
+    while true; do
+        redraw_menu
+        print_jobs_table
+        options=()
+        while IFS= read -r stem; do
+            [[ -n "${stem}" ]] || continue
+            kind="${stem%%.*}"
+            id="${stem#*.}"
+            state="$(job_state "${kind}" "${id}")"
+            options+=("${state}  ${kind}:${id}")
+        done < <(iter_job_stems)
+        if (( ${#options[@]} == 0 )); then
+            pause_menu || return 0
+            return 0
+        fi
+        choice="$(choose "Select a job  or manage downloads" \
+            "${options[@]}" \
+            "Clear finished jobs" \
+            "Back")" || return 0
+        case "${choice}" in
+            "Clear finished jobs") clear_finished_jobs ;;
+            Back|'') return 0 ;;
+            *)
+                read -r kind id <<<"$(parse_job_choice "${choice}")" || continue
+                [[ -n "${kind}" && -n "${id}" ]] || continue
+                choice="$(choose "${kind} ${id}" \
+                    "Show log" \
+                    "Stop download" \
+                    "Back")" || continue
+                case "${choice}" in
+                    "Show log") show_job_log "${kind}" "${id}"; pause_menu || return 0 ;;
+                    "Stop download") stop_job "${kind}" "${id}"; pause_menu || return 0 ;;
+                esac
+                ;;
+        esac
+    done
+}
+
+download_model_menu() {
+    local choice running
+    [[ -t 0 ]] || { warn 'Use list-models, model-status, model-files ID, download-model ID, download-model-nas ID, or upload-model ID without a terminal.'; return 1; }
+    maybe_offer_nas_scan
+    while true; do
+        redraw_menu
+        print_compact_header
+        running="$(running_job_lines | awk 'END { print NR+0 }')"
+        choice="$(choose "Browse a category  ·  downloads keep running if you leave" \
+            "Image generation" \
+            "Image editing" \
+            "Segmentation / masking" \
+            "Upscaling & restoration" \
+            "Video generation" \
+            "Downloads (${running} running)" \
+            "Scan NAS" \
+            "Full status list" \
+            "Upload downloaded models to NAS" \
+            "Back")" || { warn_jobs_on_leave; return 0; }
+        case "${choice}" in
+            "Image generation") model_category_menu image ;;
+            "Image editing") model_category_menu edit ;;
+            "Segmentation / masking") model_category_menu segment ;;
+            "Upscaling & restoration") model_category_menu upscale ;;
+            "Video generation") model_category_menu video ;;
+            "Downloads"*) jobs_menu ;;
+            "Scan NAS")
+                scan_nas_index
+                pause_menu || { warn_jobs_on_leave; return 0; }
+                ;;
+            "Full status list")
+                print_model_status
+                pause_menu || { warn_jobs_on_leave; return 0; }
+                ;;
+            "Upload downloaded models to NAS")
+                upload_downloaded_menu
+                ;;
+            *) warn_jobs_on_leave; return 0 ;;
+        esac
     done
 }
 
@@ -695,24 +1838,35 @@ Direct commands:
   ujust strix-halo-comfyui -- models [stable|experimental]
   ujust strix-halo-comfyui -- download-models
   ujust strix-halo-comfyui -- list-models
+  ujust strix-halo-comfyui -- model-status [MODEL_ID|image|edit|segment|upscale|video]
   ujust strix-halo-comfyui -- model-files MODEL_ID
   ujust strix-halo-comfyui -- download-model MODEL_ID
   ujust strix-halo-comfyui -- download-model-nas MODEL_ID
+  ujust strix-halo-comfyui -- upload-model MODEL_ID
+  ujust strix-halo-comfyui -- upload-models
+  ujust strix-halo-comfyui -- download-jobs
   ujust strix-halo-comfyui -- status [stable|experimental|both]
   ujust strix-halo-comfyui -- remove [stable|experimental|both]
   ujust strix-halo-comfyui -- diagnostics
 
 Documentation: https://github.com/linuxmunchies/vimmite-v6/blob/main/docs/strix-halo-comfyui.md
 
+The model menu shows disk= (this PC) and NAS= (foxraid) as yes / 2/3 / no / ?.
+At most two jobs run at once, only one Hugging Face download, sharing 400 Mbps.
+Queued jobs wait. Percents stay in the header. Escape does not kill jobs.
+
 Catalog downloads use the host hf CLI and its resumable cache (extra disk space
 may be needed). RealESRGAN uses curl for official GitHub release assets.
-NAS downloads use rclone SMB and jq, copying the same destination paths from
-//${COMFYUI_NAS_HOST}/${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}.
+NAS downloads and uploads use rclone SMB and jq with the same destination paths
+at //${COMFYUI_NAS_HOST}/${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}.
 Override COMFYUI_NAS_HOST, COMFYUI_NAS_SHARE, COMFYUI_NAS_SUBDIR,
 COMFYUI_NAS_USER (default guest), and COMFYUI_NAS_PASSWORD (default empty).
+Uploads skip files that are not local and verify sizes after the copy.
 Optional LoRAs are separate choices and require their base models. Sizes are
 approximate main weights, not disk-space guarantees; rough estimates are marked.
-Existing legacy model contents are not moved automatically.
+Leftover ~/comfy-inputs, ~/comfy-outputs, ~/comfy-user, and ~/comfy-models trees
+are migrated into ~/ai on setup when present; the live model root stays
+${MODEL_DIR}.
 EOF
 }
 
@@ -726,7 +1880,7 @@ choose() {
     shift
     local selection
     if command -v ugum >/dev/null 2>&1; then
-        printf '\n%s\n' "${prompt}" >&2
+        printf '%s\n' "${prompt}" >&2
         ugum choose "$@"
     elif command -v gum >/dev/null 2>&1; then
         gum choose --header "${prompt}" "$@"
@@ -773,7 +1927,7 @@ menu() {
         choice="$(choose "Strix Halo image generation / ComfyUI" \
             "Stable (recommended)" \
             "Experimental (upstream dev)" \
-            "Download ComfyUI models" \
+            "Manage models (download / upload / status)" \
             "Shared data locations" \
             "Diagnostics" \
             "Help" \
@@ -781,7 +1935,7 @@ menu() {
         case "${choice}" in
             "Stable"*) environment_menu stable ;;
             "Experimental"*) environment_menu experimental ;;
-            "Download ComfyUI models") download_model_menu ;;
+            "Manage models"*) download_model_menu ;;
             "Shared data locations")
                 log "Models: ${MODEL_DIR}"
                 log "Inputs: ${INPUT_DIR}"
@@ -811,8 +1965,9 @@ run_for_target() {
 usage() {
     cat <<'EOF'
 Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|update|models|status|remove|diagnostics|help] [stable|experimental|both]
-       vimmite-strix-halo-comfyui [download-models|list-models]
-       vimmite-strix-halo-comfyui [model-files|download-model|download-model-nas] MODEL_ID
+       vimmite-strix-halo-comfyui [download-models|list-models|upload-models|download-jobs|scan-nas]
+       vimmite-strix-halo-comfyui model-status [MODEL_ID|image|edit|segment|upscale|video]
+       vimmite-strix-halo-comfyui [model-files|download-model|download-model-nas|upload-model] MODEL_ID
 EOF
 }
 
@@ -821,13 +1976,70 @@ main() {
     case "${action}" in
         menu) menu ;;
         download-models) download_model_menu ;;
-        list-models) model_catalog ;;
-        model-files|download-model|download-model-nas)
+        list-models) print_model_status ;;
+        download-jobs) print_jobs_table ;;
+        scan-nas) scan_nas_index ;;
+        _run-job)
+            [[ $# == 3 && -n "${2}" && -n "${3}" ]] || { usage >&2; return 2; }
+            trap '' HUP INT
+            mkdir -p -- "${JOB_ROOT}"
+            if ! command -v python3 >/dev/null 2>&1; then
+                set +e
+                run_catalog_job "$2" "$3" >>"$(job_logfile "$2" "$3")" 2>&1
+                printf '%s\n' "$?" >"$(job_exitfile "$2" "$3")"
+                dispatch_jobs
+                return 0
+            fi
+            python3 - "$0" "$2" "$3" "$(job_logfile "$2" "$3")" "$(job_exitfile "$2" "$3")" <<'PY'
+import os, pty, sys
+argv0, kind, mid, logfile, exitfile = sys.argv[1:]
+os.environ.setdefault("TERM", "xterm-256color")
+os.makedirs(os.path.dirname(logfile) or ".", exist_ok=True)
+log = open(logfile, "wb", buffering=0)
+
+def reader(fd):
+    data = os.read(fd, 8192)
+    if data:
+        log.write(data)
+    return data
+
+status = pty.spawn([argv0, "_run-job-inner", kind, mid], reader)
+code = os.waitstatus_to_exitcode(status)
+with open(exitfile, "w", encoding="utf-8") as fh:
+    fh.write(f"{code}\n")
+raise SystemExit(code)
+PY
+            dispatch_jobs
+            ;;
+        _run-job-inner)
+            trap '' HUP INT
+            export TERM="${TERM:-xterm-256color}"
+            set +e
+            run_catalog_job "$2" "$3"
+            printf '%s\n' "$?" >"$(job_exitfile "$2" "$3")"
+            ;;
+        model-status)
+            if [[ $# -ge 2 && -n "${2}" ]]; then
+                if catalog_entry "$2" >/dev/null || category_title "$2" >/dev/null; then
+                    print_model_status "$2"
+                    catalog_entry "$2" >/dev/null && show_model_files "$2"
+                else
+                    warn "Unknown model ID or category: $2"
+                    usage >&2
+                    return 2
+                fi
+            else
+                print_model_status
+            fi
+            ;;
+        upload-models) upload_downloaded_models ;;
+        model-files|download-model|download-model-nas|upload-model)
             [[ $# == 2 && -n "${2}" ]] || { usage >&2; return 2; }
             case "${action}" in
                 model-files) model_manifest "$2" ;;
                 download-model) download_model "$2" ;;
                 download-model-nas) download_model_nas "$2" ;;
+                upload-model) upload_model "$2" ;;
             esac
             ;;
         install|update|remove)

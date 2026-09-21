@@ -54,16 +54,24 @@ Advanced users can choose **Enter shell** to inspect the stack or run ComfyUI
 manually. Binding it to a non-loopback address exposes an unauthenticated web
 application unless the user adds suitable network and access controls.
 
-Choose **Download ComfyUI models** for Vimmite's curated model submenu. Each
-entry shows its approximate payload size. After choosing a model, select either
-**Hugging Face** or **NAS** as the source. NAS downloads read
-`//10.1.1.5/ai/comfy-models` and copy directly into the same shared model tree;
+Choose **Manage models (download / upload / status)** for Vimmite's curated
+model menu. The header is a short color summary plus live percents for any active
+downloads. Escape or Back leaves the menu; those jobs keep running. Each choice
+starts with two columns, `disk=` (this PC) and `NAS=` (foxraid), each `yes`,
+`2/3`, `no`, or `?` until you scan. The first visit offers a NAS scan; you
+can run **Scan NAS** again later. Image generation lists **Qwen Image 2.1**
+and **Krea 2 Turbo** at the top. Hugging Face, NAS, and upload jobs run in the
+background so you can queue another model without waiting; **Downloads** shows
+logs and can stop a job. **Full status list** prints the complete table. NAS
+transfers use
+`//foxraid.local/ai/comfy-models` and keep the same destination layout;
 required files are checked before copying and file sizes are verified after
-the transfer. Required dependencies are included with the corresponding bundle
-where the manifest specifies them, and GLM-Image remains a Diffusers directory
-rather than being flattened. **Open Model Manager** still runs upstream's
-`model_manager` for other explicit downloads. Installing or launching an
-environment never downloads a large model automatically.
+the transfer. Uploads skip files that are not local. Required dependencies are
+included with the corresponding bundle where the manifest specifies them, and
+GLM-Image remains a Diffusers directory rather than being flattened. **Open
+Model Manager** still runs upstream's `model_manager` for other explicit
+downloads. Installing or launching an environment never downloads a large model
+automatically.
 
 Direct commands are also available:
 
@@ -73,8 +81,13 @@ ujust strix-halo-comfyui -- launch stable
 ujust strix-halo-comfyui -- models stable
 ujust strix-halo-comfyui -- download-models
 ujust strix-halo-comfyui -- list-models
+ujust strix-halo-comfyui -- model-status qwen-image-21
 ujust strix-halo-comfyui -- download-model qwen-image
 ujust strix-halo-comfyui -- download-model-nas qwen-gguf
+ujust strix-halo-comfyui -- upload-model krea-turbo
+ujust strix-halo-comfyui -- upload-models
+ujust strix-halo-comfyui -- download-jobs
+ujust strix-halo-comfyui -- scan-nas
 ujust strix-halo-comfyui -- shell experimental
 ujust strix-halo-comfyui -- status both
 ujust strix-halo-comfyui -- diagnostics
@@ -87,19 +100,27 @@ Distrobox shares the host home directory. Vimmite prepares these paths:
 | Path | Purpose | Shared between channels? |
 | --- | --- | --- |
 | `~/ai/comfy-models` | Checkpoints, text encoders, VAEs, diffusion models, UNets, LoRAs, and vision models | Yes |
-| `~/comfy-inputs` | User inputs and uploads | Yes |
-| `~/comfy-outputs` | Generated images and videos | Yes |
-| `~/comfy-user/stable` | Stable workflows, settings, and user database | No |
-| `~/comfy-user/experimental` | Experimental workflows, settings, and user database | No |
+| `~/ai/comfy-inputs` | User inputs and uploads | Yes |
+| `~/ai/comfy-outputs` | Generated images and videos | Yes |
+| `~/ai/comfy-user/stable` | Stable workflows, settings, and user database | No |
+| `~/ai/comfy-user/experimental` | Experimental workflows, settings, and user database | No |
+
+Setup migrates leftover `~/comfy-inputs`, `~/comfy-outputs`, `~/comfy-user`, and
+`~/comfy-models` into those `~/ai` destinations when present. A leftover tree is
+moved when the destination is missing or empty, and a compatibility symlink is
+left at the old path so an older image still finds the data. If both trees have
+content, they are merged and the old tree is left in place. The live model root
+is always `~/ai/comfy-models`.
 
 The model downloader uses `HF_XET_HIGH_PERFORMANCE=1 hf download` and stores
 files under the destination subdirectories listed in the model menu. Existing
 complete files are reused when possible, while incomplete downloads can resume.
-The NAS source uses the same destination layout. Its defaults are
-`COMFYUI_NAS_HOST=10.1.1.5`, `COMFYUI_NAS_SHARE=ai`,
+The NAS source uses the same destination layout, and **Upload to NAS** copies
+local catalog files back to that share. Defaults are
+`COMFYUI_NAS_HOST=foxraid.local`, `COMFYUI_NAS_SHARE=ai`,
 `COMFYUI_NAS_SUBDIR=comfy-models`, and `COMFYUI_NAS_USER=guest`; set
 `COMFYUI_NAS_PASSWORD` for a password-protected share. These variables can be
-used with the direct command when the NAS is mounted at a different location.
+used with the direct command when the NAS is at a different location.
 
 Separating the two user directories prevents an experimental UI or database
 change from overwriting stable settings. Vimmite seeds upstream's bundled UI

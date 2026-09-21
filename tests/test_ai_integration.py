@@ -309,22 +309,29 @@ box_shell() { cat; }
         result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = [line for line in result.stdout.splitlines() if line]
-        self.assertEqual(len(entries), 33)
+        self.assertEqual(len(entries), 35)
         for model_id in (
-            'qwen-image', 'qwen-gguf', 'ideogram', 'glm-image', 'qwen-edit',
-            'sam', 'realesrgan', 'minimax', 'ltx-dev', 'hunyuan-i2v',
-            'wan-i2v', 'wan-i2v-lightning',
+            'qwen-image-21', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
+            'glm-image', 'qwen-edit', 'sam', 'realesrgan', 'minimax', 'ltx-dev',
+            'hunyuan-i2v', 'wan-i2v', 'wan-i2v-lightning',
         ):
             self.assertTrue(any(line.startswith(model_id + '|') for line in entries), model_id)
+        self.assertTrue(all(line.split('|')[1] in {
+            'image', 'edit', 'segment', 'upscale', 'video',
+        } for line in entries))
         self.assertTrue(all('(' in line and ')' in line for line in entries))
 
     def test_comfy_model_manifest_preserves_dependencies_and_diffusers_layout(self):
         result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest qwen-image-21
+model_manifest krea-turbo
 model_manifest qwen-gguf
 model_manifest glm-image
 model_manifest wan-t2v-lightning
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Comfy-Org/Qwen-Image-2.1|diffusion_models/qwen_image_2.1_bf16.safetensors|diffusion_models/qwen_image_2.1_bf16.safetensors', result.stdout)
+        self.assertIn('Comfy-Org/Krea-2|diffusion_models/krea2_turbo_bf16.safetensors|diffusion_models/krea2_turbo_bf16.safetensors', result.stdout)
         self.assertIn('unsloth/Qwen2.5-VL-7B-Instruct-GGUF|Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf|text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf', result.stdout)
         self.assertIn('zai-org/GLM-Image|*|diffusers/GLM-Image', result.stdout)
         self.assertIn('lightx2v/Wan2.2-Lightning|Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors|loras/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors', result.stdout)
@@ -408,17 +415,215 @@ test -s "$MODEL_DIR/diffusers/GLM-Image/model_index.json"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('NAS download complete: glm-image', result.stdout)
 
+    def test_comfy_model_status_reports_missing_partial_complete(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'example/repo|a.safetensors|diffusion_models/a.safetensors' 'example/repo|b.safetensors|vae/b.safetensors'; }
+model_status demo
+mkdir -p "$MODEL_DIR/diffusion_models" "$MODEL_DIR/vae"
+printf 'a' > "$MODEL_DIR/diffusion_models/a.safetensors"
+model_status demo
+printf 'b' > "$MODEL_DIR/vae/b.safetensors"
+model_status demo
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ['missing 0 2', 'partial 1 2', 'complete 2 2'])
+
+    def test_comfy_nas_upload_copies_catalog_destination(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'nas/repo|example.safetensors|diffusion_models/example.safetensors'; }
+mkdir -p "$MODEL_DIR/diffusion_models"
+printf 'local payload' > "$MODEL_DIR/diffusion_models/example.safetensors"
+rclone() { :; }
+rclone_smb() {
+    case "$1" in
+        lsd) return 0 ;;
+        lsjson) printf '%s\\n' '{"IsDir":false,"Size":13}' ;;
+        copyto)
+            printf '%s\\n' "uploaded:$2->$3"
+            ;;
+        *) return 0 ;;
+    esac
+}
+upload_model demo
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NAS upload complete: demo', result.stdout)
+        self.assertIn(f'{self.home}/ai/comfy-models/diffusion_models/example.safetensors', result.stdout)
+        self.assertIn('foxraid.local', result.stdout)
+
+    def test_comfy_nas_upload_skips_missing_local_files(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'nas/repo|example.safetensors|diffusion_models/example.safetensors'; }
+rclone() { :; }
+rclone_smb() { return 0; }
+upload_model demo
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Nothing local to upload for demo', result.stderr)
+
     def test_comfy_download_menu_exposes_nas_source_and_overrides(self):
         source = (LIB / 'vimmite-strix-halo-comfyui').read_text()
-        self.assertIn("source=\"$(choose 'Download source' 'Hugging Face' NAS Back)\"", source)
-        self.assertIn('download-model-nas MODEL_ID', source)
+        self.assertIn('"Download from Hugging Face"', source)
+        self.assertIn('"Download from NAS"', source)
+        self.assertIn('"Upload to NAS"', source)
+        self.assertIn('"Full status list"', source)
+        self.assertIn('"Downloads (${running} running)"', source)
+        self.assertIn('"Scan NAS"', source)
+        self.assertIn('queue_job', source)
+        self.assertIn('upload-model MODEL_ID', source)
         self.assertIn('COMFYUI_NAS_HOST', source)
+        self.assertIn('foxraid.local', source)
         self.assertIn('//${COMFYUI_NAS_HOST}/${COMFYUI_NAS_SHARE}/${COMFYUI_NAS_SUBDIR}', source)
+        self.assertIn("disk=%-5s NAS=%-5s", source)
+        self.assertIn('status_cell', source)
+        self.assertIn('Never put', source)
+        self.assertIn('qwen-image-21|image|', source)
+        self.assertIn('krea-turbo|image|', source)
+        self.assertLess(source.index('qwen-image-21|image|'), source.index('krea-turbo|image|'))
+        self.assertLess(source.index('krea-turbo|image|'), source.index('qwen-image|image|'))
+        self.assertIn('readonly MODEL_DIR="${HOME}/ai/comfy-models"', source)
+        self.assertIn('readonly OUTPUT_DIR="${HOME}/ai/comfy-outputs"', source)
+        self.assertIn('readonly INPUT_DIR="${HOME}/ai/comfy-inputs"', source)
+        self.assertIn('readonly USER_ROOT="${HOME}/ai/comfy-user"', source)
+        self.assertNotIn('readonly OUTPUT_DIR="${HOME}/comfy-outputs"', source)
+        self.assertNotIn('readonly MODEL_DIR="${HOME}/comfy-models"', source)
+
+    def test_comfy_parse_model_choice_reads_plain_status_prefixes(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+parse_model_choice "disk=yes   NAS=yes   qwen-image-21: Qwen Image 2.1 7B BF16"
+parse_model_choice "disk=2/3   NAS=no    krea-turbo: Krea 2 Turbo BF16"
+parse_model_choice "disk=no    NAS=?     anima: Anima Aesthetic v1.1"
+parse_job_choice "running  hf:qwen-image-21"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            'qwen-image-21', 'krea-turbo', 'anima', 'hf qwen-image-21',
+        ])
+
+    def test_comfy_queue_job_runs_download_in_background(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+catalog_entry() { printf '%s\\n' 'demo|image|Demo model'; }
+download_model() { printf 'bg-download %s\\n' "$1"; }
+queue_job demo hf
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -s "$JOB_ROOT/hf.demo.log" ]] && break
+    sleep 0.05
+done
+grep -q 'bg-download demo' "$JOB_ROOT/hf.demo.log"
+test -f "$JOB_ROOT/hf.demo.pid"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Queued hf demo', result.stdout)
+        self.assertIn('jobs keep running', result.stdout)
+
+    def test_comfy_second_hf_job_waits_while_one_runs(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+catalog_entry() { printf '%s|image|%s\\n' "$1" "$1"; }
+download_model() { printf 'start-%s\\n' "$1"; sleep 3; printf 'done-%s\\n' "$1"; }
+queue_job one hf
+queue_job two hf
+test -f "$JOB_ROOT/hf.one.pid"
+test -f "$JOB_ROOT/hf.two.queued"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Queued hf one', result.stdout)
+        self.assertIn('Queued hf two', result.stdout)
+
+    def test_comfy_status_table_lists_qwen21_and_krea(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', 'print_model_status image')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('disk=this PC', result.stdout)
+        self.assertIn('qwen-image-21', result.stdout)
+        self.assertIn('krea-turbo', result.stdout)
+        self.assertLess(result.stdout.index('qwen-image-21'), result.stdout.index('krea-turbo'))
+
+    def test_comfy_job_progress_reads_percent_from_log(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+mkdir -p "$JOB_ROOT"
+printf '%s\\n' 'Downloading repo/qwen3vl_8b_bf16.safetensors -> dest' > "$JOB_ROOT/hf.demo.log"
+printf '\\rreconstructing file: 42%% | 1.07GB / 17.5GB' >> "$JOB_ROOT/hf.demo.log"
+job_progress hf demo
+echo
+printf '%s\\n' \
+  'PROGRESS start 1/2 foo.safetensors 1000' \
+  'Uploading foo -> remote' \
+  '2026/09/20 19:38:50 INFO  :   120.027 MiB / 810.250 MiB, 15%, 30.019 MiB/s, ETA 22s' \
+  > "$JOB_ROOT/upload.demo.log"
+job_progress upload demo 2
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        self.assertRegex(lines[0], r'42%')
+        self.assertRegex(lines[1], r'\d+%')
+        self.assertIn('120.027MiB/810.250MiB', lines[1])
+
+    def test_comfy_job_progress_reads_byte_watcher(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+mkdir -p "$JOB_ROOT"
+printf '%s\\n' \
+  'PROGRESS expect 10000000000' \
+  'PROGRESS start 1/1 foo.safetensors 10000000000' \
+  'PROGRESS bytes 2500000000' \
+  > "$JOB_ROOT/hf.bytes.log"
+job_progress hf bytes 1
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r'25%')
+
+    def test_comfy_nas_status_uses_scanned_index(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+model_manifest() { printf '%s\\n' 'r|a.safetensors|diffusion_models/a.safetensors' 'r|b.safetensors|vae/b.safetensors'; }
+mkdir -p "$(dirname "$NAS_INDEX")"
+printf '%s\\n' 'diffusion_models/a.safetensors' > "$NAS_INDEX"
+date +%s > "$NAS_STAMP"
+nas_model_status demo
+status_cell partial 1 2
+status_cell complete 2 2
+status_cell unknown 0 0
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('partial 1 2', result.stdout)
+        self.assertIn('1/2', result.stdout)
+        self.assertIn('yes', result.stdout)
+        self.assertIn('?', result.stdout)
+
+    def test_comfy_migrates_legacy_inputs_when_dest_missing(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+mkdir -p "$HOME/comfy-inputs"
+printf 'legacy-input\\n' > "$HOME/comfy-inputs/sentinel.txt"
+ensure_host_data stable
+test -f "$HOME/ai/comfy-inputs/sentinel.txt"
+test -L "$HOME/comfy-inputs"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.home / 'ai/comfy-inputs/sentinel.txt').read_text(), 'legacy-input\n')
+        self.assertTrue((self.home / 'comfy-inputs').is_symlink())
+        self.assertIn('Migrating leftover', result.stdout)
+
+    def test_comfy_migrates_leftover_models_into_model_dir(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui', '''
+mkdir -p "$HOME/comfy-models/diffusion_models" "$HOME/ai/comfy-models/vae"
+printf 'old-model\\n' > "$HOME/comfy-models/diffusion_models/sentinel.safetensors"
+printf 'kept\\n' > "$HOME/ai/comfy-models/vae/existing.safetensors"
+ensure_host_data stable
+test -f "$MODEL_DIR/diffusion_models/sentinel.safetensors"
+test "$(cat "$MODEL_DIR/diffusion_models/sentinel.safetensors")" = 'old-model'
+test -f "$MODEL_DIR/vae/existing.safetensors"
+test -f "$HOME/comfy-models/diffusion_models/sentinel.safetensors"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.home / 'ai/comfy-models/diffusion_models/sentinel.safetensors').read_text(),
+            'old-model\n',
+        )
+        self.assertEqual((self.home / 'ai/comfy-models/vae/existing.safetensors').read_text(), 'kept\n')
+        self.assertTrue((self.home / 'comfy-models/diffusion_models/sentinel.safetensors').is_file())
+        self.assertIn('Merging leftover', result.stdout)
 
     def test_strix_menu_separates_llm_and_comfy_downloads(self):
         source = (LIB / 'vimmite-strix-halo-ai').read_text()
         self.assertIn("'4. Download recommended LLM models'", source)
-        self.assertIn("'5. Download ComfyUI models'", source)
+        self.assertIn("'5. Manage ComfyUI models'", source)
         self.assertIn('"${COMFYUI_MANAGER}" download-models', source)
 
     def test_recipe_forwards_target(self):

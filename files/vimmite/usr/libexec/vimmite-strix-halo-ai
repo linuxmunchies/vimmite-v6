@@ -513,7 +513,7 @@ menu() {
         '2. Install ROCm'
         '3. Install both'
         '4. Download recommended LLM models'
-        '5. Download ComfyUI models'
+        '5. Manage ComfyUI models'
         '6. Update/recreate Vulkan'
         '7. Update/recreate ROCm'
         '8. Update/recreate both'

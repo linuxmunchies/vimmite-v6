@@ -23,8 +23,8 @@ ujust strix-halo-ai
 ```
 
 The menu installs, updates, verifies, or removes either llama.cpp backend,
-downloads the recommended LLM GGUF models, opens a separate ComfyUI model
-download submenu, and opens the ComfyUI manager. Its lifecycle operations are
+downloads the recommended LLM GGUF models, opens the ComfyUI model manager
+(download, upload, and local status), and opens the ComfyUI environment menu. Its lifecycle operations are
 idempotent. Install keeps
 an existing container; Update/recreate intentionally replaces it from the
 newest image for the same stable tag; Remove leaves all model files intact.

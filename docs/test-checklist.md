@@ -124,19 +124,22 @@ rebase.
       PyTorch GPU availability on gfx1151.
 - [ ] Stable and experimental ComfyUI launch at `http://127.0.0.1:8000`
       without a LAN listen flag and use separate persistent user directories.
-- [ ] Both channels share sentinels in `~/ai/comfy-models`, `~/comfy-inputs`, and
-      `~/comfy-outputs`; refresh and removal preserve them.
-- [ ] ComfyUI model downloads offer separate Hugging Face and NAS sources;
-      NAS pulls validate required remote files and place them in the catalog
-      folders under `~/ai/comfy-models`.
+- [ ] Both channels share sentinels in `~/ai/comfy-models`, `~/ai/comfy-inputs`, and
+      `~/ai/comfy-outputs`; refresh and removal preserve them.
+- [ ] ComfyUI model downloads offer separate Hugging Face and NAS sources,
+      and local catalog files can be uploaded to `//foxraid.local/ai/comfy-models`;
+      NAS pulls and uploads validate required files and place them in the
+      catalog folders under `~/ai/comfy-models`.
 - [ ] Saved workflows and settings survive refresh below
-      `~/comfy-user/<environment>`; newly named bundled workflows are seeded
+      `~/ai/comfy-user/<environment>`; newly named bundled workflows are seeded
       without overwriting existing files.
 - [ ] The upstream Model Manager opens for each channel and no model is
       downloaded during container creation or normal launch.
-- [ ] The ComfyUI model submenu lists every manifest bundle with an approximate
-      size, downloads with the Xet-optimized `hf` CLI, preserves destination
-      subdirectories, and keeps GLM-Image's Diffusers layout intact.
+- [ ] The ComfyUI model submenu shows a short color summary with live download
+      percents, prefixes each choice with local YES/SOME/NO and a NAS column,
+      can scan the NAS share, lists Qwen Image 2.1 and Krea 2 Turbo in image
+      generation, keeps background downloads running after Escape/Back, and
+      preserves destination subdirectories including GLM-Image's Diffusers layout.
 - [ ] Diagnostics report the actual PyTorch/HIP/ROCm SDK values and ComfyUI
       revision without claiming a fixed ROCm major version.
 - [ ] Refresh requires confirmation, pulls before deleting, recreates only the

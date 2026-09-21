@@ -202,11 +202,12 @@ ujust strix-halo-ai
 
 The single menu manages stable Vulkan RADV and ROCm llama.cpp toolboxes plus
 stable and experimental upstream ComfyUI containers. It downloads only models
-the user explicitly selects, keeps ComfyUI models, inputs, outputs, workflows,
-and settings in the user's home, and runs GPU diagnostics. It refuses other AMD
-GPUs; use RamaLama on those systems. See the [Strix Halo AI guide](strix-halo-ai.md)
-for llama.cpp and the [Strix Halo ComfyUI guide](strix-halo-comfyui.md) for image
-generation lifecycle and storage.
+the user explicitly selects, can upload those files to the NAS share, and keeps
+ComfyUI models, inputs, outputs, workflows, and settings in the user's home.
+It also runs GPU diagnostics. It refuses other AMD GPUs; use RamaLama on those
+systems. See the [Strix Halo AI guide](strix-halo-ai.md) for llama.cpp and the
+[Strix Halo ComfyUI guide](strix-halo-comfyui.md) for image generation lifecycle
+and storage.
 
 ## Lossless Scaling
 
