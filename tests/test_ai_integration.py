@@ -195,7 +195,7 @@ devbox_exists() { return 1; }
 command_not_found_handle() { printf 'CALLED:%s %s\\n' "$1" "$*"; }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('CALLED:/usr/libexec/vimmite-install-ai-app', result.stdout)
+        self.assertIn('CALLED:mock-vimmite-install-ai-app', result.stdout)
         self.assertIn('chatgpt host', result.stdout)
         self.assertNotIn('rpm-ostree upgrade', result.stdout)
 
@@ -213,7 +213,7 @@ distrobox() {
 command_not_found_handle() { printf 'CALLED:%s %s\\n' "$1" "$*"; }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('CALLED:/usr/libexec/vimmite-install-ai-app', result.stdout)
+        self.assertIn('CALLED:mock-vimmite-install-ai-app', result.stdout)
         self.assertIn('chatgpt container', result.stdout)
 
     def test_container_cli_environment_is_separate(self):
