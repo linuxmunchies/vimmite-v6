@@ -59,40 +59,45 @@ update_devbox() {
 }
 
 update_desktop_packages() {
-    local host_packages=()
-    rpm -q chatgpt >/dev/null 2>&1 && host_packages+=(chatgpt)
-    rpm -q claude-desktop-unofficial >/dev/null 2>&1 && host_packages+=(claude-desktop-unofficial)
-    if ((${#host_packages[@]} > 0)); then
+    local host_found=0
+
+    if rpm -q chatgpt >/dev/null 2>&1; then
+        log "Updating host ChatGPT Desktop from the current upstream RPM ..."
+        /usr/libexec/vimmite-install-ai-app chatgpt host
+        host_found=1
+    fi
+
+    if rpm -q claude-desktop-unofficial >/dev/null 2>&1; then
+        log "Updating host Claude Desktop from its configured RPM repository ..."
         if command -v rpm-ostree >/dev/null 2>&1; then
-            log "Updating host desktop RPMs through the Atomic deployment ..."
             sudo rpm-ostree upgrade
         elif command -v dnf5 >/dev/null 2>&1; then
-            sudo dnf5 upgrade --refresh --assumeyes "${host_packages[@]}"
+            sudo dnf5 upgrade --refresh --assumeyes claude-desktop-unofficial
         elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf upgrade --refresh --assumeyes "${host_packages[@]}"
+            sudo dnf upgrade --refresh --assumeyes claude-desktop-unofficial
         else
             warn "No supported host RPM updater is available."
             return 1
         fi
-    else
-        log "No host ChatGPT/Claude desktop RPMs were found."
+        host_found=1
     fi
+
+    (( host_found == 1 )) || log "No host ChatGPT/Claude desktop RPMs were found."
+
     if devbox_exists; then
-        # Pass the script as an argument rather than on stdin so the terminal
-        # stays attached and dnf can draw its progress.
         local -a enter_flags=(--name "${DEV_BOX}")
         [[ -t 0 && -t 1 ]] || enter_flags+=(--no-tty)
-        distrobox enter "${enter_flags[@]}" -- bash -c '
-set -euo pipefail
-packages=()
-rpm -q chatgpt >/dev/null 2>&1 && packages+=(chatgpt)
-rpm -q claude-desktop-unofficial >/dev/null 2>&1 && packages+=(claude-desktop-unofficial)
-if ((${#packages[@]} > 0)); then
-    sudo dnf upgrade --refresh --assumeyes "${packages[@]}"
-else
-    echo "No ChatGPT/Claude desktop RPMs are installed in vimmite-dev."
-fi
-'
+
+        if distrobox enter "${enter_flags[@]}" -- rpm -q chatgpt >/dev/null 2>&1; then
+            log "Updating ChatGPT Desktop inside ${DEV_BOX} from the current upstream RPM ..."
+            /usr/libexec/vimmite-install-ai-app chatgpt container
+        fi
+
+        if distrobox enter "${enter_flags[@]}" -- rpm -q claude-desktop-unofficial >/dev/null 2>&1; then
+            log "Updating Claude Desktop inside ${DEV_BOX} from its configured RPM repository ..."
+            distrobox enter "${enter_flags[@]}" -- \
+                sudo dnf upgrade --refresh --assumeyes claude-desktop-unofficial
+        fi
     fi
 }
 
