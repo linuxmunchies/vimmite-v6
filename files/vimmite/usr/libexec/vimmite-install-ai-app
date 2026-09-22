@@ -124,8 +124,16 @@ install_chatgpt_host() {
     local package
     package="$(download_chatgpt)" || return 1
     if command -v rpm-ostree >/dev/null 2>&1; then
-        log "Layering ChatGPT Desktop into the next Atomic deployment ..."
-        sudo rpm-ostree install --idempotent "${package}"
+        if rpm -q chatgpt >/dev/null 2>&1 || rpm-ostree status --json 2>/dev/null | grep -q '"chatgpt-'; then
+            # Local RPM requests are persistent in rpm-ostree. Installing a newer
+            # local build without removing the old request makes libdnf try to
+            # satisfy both NEVRAs at once and fail with "cannot install both".
+            log "Replacing the existing ChatGPT Desktop local RPM in the next Atomic deployment ..."
+            sudo rpm-ostree install --uninstall=chatgpt "${package}"
+        else
+            log "Layering ChatGPT Desktop into the next Atomic deployment ..."
+            sudo rpm-ostree install --idempotent "${package}"
+        fi
     elif command -v dnf5 >/dev/null 2>&1; then
         sudo dnf5 install --assumeyes "${package}"
     elif command -v dnf >/dev/null 2>&1; then
