@@ -162,6 +162,60 @@ sudo() { echo INSTALLED; }
         self.assertNotIn('INSTALLED', result.stdout)
         self.assertEqual((cache / 'chatgpt.x86_64.rpm').read_text(), 'old')
 
+    def test_chatgpt_atomic_update_replaces_existing_local_rpm_request(self):
+        result = self.run_functions('vimmite-install-ai-app', 'install_chatgpt_host', '''
+require_commands() { :; }
+download_chatgpt() { printf '%s\\n' "$HOME/chatgpt-current.rpm"; }
+command() { [[ "$1" == -v && "$2" == rpm-ostree ]]; }
+rpm() { [[ "$1" == -q && "$2" == chatgpt ]]; }
+sudo() { printf 'SUDO:%s\\n' "$*"; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SUDO:rpm-ostree install --uninstall=chatgpt', result.stdout)
+        self.assertIn('chatgpt-current.rpm', result.stdout)
+        self.assertNotIn('--idempotent', result.stdout)
+
+    def test_chatgpt_atomic_first_install_still_layers_idempotently(self):
+        result = self.run_functions('vimmite-install-ai-app', 'install_chatgpt_host', '''
+require_commands() { :; }
+download_chatgpt() { printf '%s\\n' "$HOME/chatgpt-current.rpm"; }
+command() { [[ "$1" == -v && "$2" == rpm-ostree ]]; }
+rpm() { return 1; }
+rpm-ostree() { [[ "$1" == status ]] && printf '{}\\n'; }
+sudo() { printf 'SUDO:%s\\n' "$*"; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SUDO:rpm-ostree install --idempotent', result.stdout)
+        self.assertNotIn('--uninstall=chatgpt', result.stdout)
+
+    def test_desktop_update_refreshes_host_chatgpt_via_local_rpm_installer(self):
+        result = self.run_functions('vimmite-ai-update', 'update_desktop_packages', '''
+rpm() { [[ "$1" == -q && "$2" == chatgpt ]]; }
+devbox_exists() { return 1; }
+command_not_found_handle() { printf 'CALLED:%s %s\\n' "$1" "$*"; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('CALLED:mock-vimmite-install-ai-app', result.stdout)
+        self.assertIn('chatgpt host', result.stdout)
+        self.assertNotIn('rpm-ostree upgrade', result.stdout)
+
+    def test_desktop_update_refreshes_container_chatgpt_via_local_rpm_installer(self):
+        result = self.run_functions('vimmite-ai-update', 'update_desktop_packages', '''
+rpm() { return 1; }
+devbox_exists() { return 0; }
+distrobox() {
+    case "$*" in
+        *'rpm -q chatgpt'*) return 0 ;;
+        *'rpm -q claude-desktop-unofficial'*) return 1 ;;
+        *) printf 'DISTROBOX:%s\\n' "$*" ;;
+    esac
+}
+command_not_found_handle() { printf 'CALLED:%s %s\\n' "$1" "$*"; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('CALLED:mock-vimmite-install-ai-app', result.stdout)
+        self.assertIn('chatgpt container', result.stdout)
+
     def test_container_cli_environment_is_separate(self):
         result = self.run_functions('vimmite-install-ai-cli', 'install_cli codex container', '''
 ensure_devbox() { :; }
