@@ -262,10 +262,12 @@ qwen21_marker() {
 qwen21_core_ready() {
     local container="$1"
     container_exec "${container}" grep -Fq 'node_id="TextEncodeQwenImage21"' /opt/ComfyUI/comfy_extras/nodes_qwen.py \
-        && container_exec "${container}" /opt/venv/bin/python -c '
+        && container_exec "${container}" env "QWEN21_TEMPLATES_VERSION=${QWEN21_TEMPLATES_VERSION}" /opt/venv/bin/python -c '
+import os
 from importlib.metadata import version
 from packaging.version import Version
-raise SystemExit(0 if Version(version("comfyui-workflow-templates")) >= Version("0.11.66") else 1)
+required = os.environ["QWEN21_TEMPLATES_VERSION"]
+raise SystemExit(0 if Version(version("comfyui-workflow-templates")) >= Version(required) else 1)
 ' >/dev/null 2>&1
 }
 
