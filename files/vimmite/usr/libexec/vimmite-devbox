@@ -14,6 +14,7 @@ Usage: ujust vimmite-dev [action]
   create          Build the local image if needed and assemble vimmite-dev
   build           Rebuild the local development image
   update          Upgrade packages in place, retaining installed applications
+  check           Show whether vimmite-dev has package updates
   enter [args]    Enter the box, optionally passing a command
   status          Show image, container, integration, and version state
   doctor          Check tools, integration, and representative compilers
@@ -82,6 +83,22 @@ update_box() {
     box_exists || die "create the development box first"
     in_box sudo dnf upgrade --refresh --assumeyes
     echo "${BOX_NAME} packages were updated; installed applications were retained."
+}
+
+check_box() {
+    local result
+    check_host
+    box_exists || die "create the development box first"
+    if in_box sudo dnf check-upgrade --refresh; then
+        echo "${BOX_NAME} packages are up to date."
+    else
+        result=$?
+        if (( result == 100 )); then
+            echo "${BOX_NAME} has package updates available."
+        else
+            return "${result}"
+        fi
+    fi
 }
 
 status_box() {
@@ -198,6 +215,7 @@ case "${action}" in
     create) create_box ;;
     build) build_image ;;
     update|upgrade) update_box ;;
+    check) check_box ;;
     enter)
         check_host
         box_exists || die "create the development box first"

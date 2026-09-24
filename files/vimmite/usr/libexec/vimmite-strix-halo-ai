@@ -160,7 +160,7 @@ cleanup_old_repository_images() {
 }
 
 update_backend() {
-    local backend="$1" container image flags
+    local backend="$1" force="${2:-0}" mode="${3:-update}" container image flags previous_image_id current_image_id
     require_commands
     require_strix_halo
     require_device_access "${backend}"
@@ -169,21 +169,63 @@ update_backend() {
     flags="$(backend_flags "${backend}")"
     have_container "${container}" || die "${container} is not installed; choose Install instead."
 
+    previous_image_id="$(podman inspect --format '{{.Image}}' "${container}")"
+    [[ -n "${previous_image_id}" ]] || die "Could not determine the current image ID for ${container}."
     mkdir -p "${MODEL_ROOT}"
-    podman pull "${image}" || return $?
+    log "Checking the current ${image} ..."
+    podman pull --quiet "${image}" >/dev/null || return $?
+    current_image_id="$(podman image inspect --format '{{.Id}}' "${image}")"
+    [[ -n "${current_image_id}" ]] || die "Could not determine the pulled image ID for ${image}."
+    if [[ "${mode}" == check ]]; then
+        if [[ "${current_image_id}" == "${previous_image_id}" ]]; then
+            log "${container} is up to date (${current_image_id})."
+        else
+            log "An update is available for ${container}: ${previous_image_id} -> ${current_image_id}."
+        fi
+        return 0
+    fi
+    if [[ "${force}" != 1 && "${current_image_id}" == "${previous_image_id}" ]]; then
+        log "${container} is already up to date (${current_image_id}); no container changes were made."
+        return 0
+    fi
     log "Removing ${container}; ${MODEL_ROOT} will not be touched."
     distrobox rm --force "${container}"
-    distrobox create \
-        --name "${container}" \
-        --image "${image}" \
-        --yes \
-        --no-entry \
-        --additional-flags "${flags}"
-    cleanup_old_repository_images
-    install_wrappers
-    verify_backend "${backend}"
-    container_exec "${container}" test -d "${MODEL_ROOT}" || die "${MODEL_ROOT} is not visible inside ${container}."
-    log "${container} was recreated from the latest stable tag; models were preserved."
+    if distrobox create \
+            --name "${container}" \
+            --image "${image}" \
+            --yes \
+            --no-entry \
+            --additional-flags "${flags}" \
+            && install_wrappers \
+            && verify_backend "${backend}" \
+            && container_exec "${container}" test -d "${MODEL_ROOT}"; then
+        cleanup_old_repository_images
+        log "${container} was recreated from ${image}; models were preserved."
+        return 0
+    fi
+
+    warn "The refreshed ${container} failed verification; restoring its previous image."
+    if have_container "${container}"; then
+        distrobox rm --force "${container}" || true
+    fi
+    if distrobox create \
+            --name "${container}" \
+            --image "${previous_image_id}" \
+            --yes \
+            --no-entry \
+            --additional-flags "${flags}" \
+            && install_wrappers; then
+        die "Refresh failed, but ${container} was restored from its previous image."
+    fi
+    die "Refresh failed and ${container} could not be restored automatically. Models in HOME remain untouched."
+}
+
+refresh_backend() {
+    update_backend "$1" 1
+}
+
+check_backend() {
+    update_backend "$1" 0 check
 }
 
 remove_backend() {
@@ -484,7 +526,7 @@ EOF
 
 run_both() {
     local action="$1"
-    if [[ "${action}" == update ]]; then
+    if [[ "${action}" == check || "${action}" == update || "${action}" == refresh ]]; then
         local backend container found=false
         for backend in vulkan rocm; do
             container="$(backend_container "${backend}")"
@@ -573,7 +615,7 @@ menu() {
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-strix-halo-ai [menu|install|update|remove|stop|version|download-models|verify|help] [vulkan|rocm|both]
+Usage: vimmite-strix-halo-ai [menu|install|check|update|refresh|remove|stop|version|download-models|verify|help] [vulkan|rocm|both]
 EOF
 }
 
@@ -581,7 +623,7 @@ main() {
     local action="${1:-menu}" target="${2:-}"
     case "${action}" in
         menu) menu ;;
-        install|update|remove)
+        install|check|update|refresh|remove)
             [[ "${target}" =~ ^(vulkan|rocm|both)$ ]] || { usage >&2; exit 2; }
             if [[ "${action}" == install ]]; then
                 action=create

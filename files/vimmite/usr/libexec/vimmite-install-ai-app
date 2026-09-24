@@ -121,8 +121,14 @@ download_chatgpt() {
 
 install_chatgpt_host() {
     require_commands curl || die "curl is required for ChatGPT Desktop setup."
-    local package
+    local package available_version installed_version
     package="$(download_chatgpt)" || return 1
+    available_version="$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "${package}" 2>/dev/null || true)"
+    installed_version="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' chatgpt 2>/dev/null || true)"
+    if [[ -n "${available_version}" && "${available_version}" == "${installed_version}" ]]; then
+        log "ChatGPT Desktop is up to date at ${available_version}."
+        return 0
+    fi
     if command -v rpm-ostree >/dev/null 2>&1; then
         if rpm -q chatgpt >/dev/null 2>&1 || rpm-ostree status --json 2>/dev/null | grep -q '"chatgpt-'; then
             # Local RPM requests are persistent in rpm-ostree. Installing a newer
@@ -147,8 +153,14 @@ install_chatgpt_host() {
 install_chatgpt_container() {
     ensure_devbox
     require_commands curl || die "curl is required to download ChatGPT Desktop."
-    local package
+    local package available_version installed_version
     package="$(download_chatgpt)" || return 1
+    available_version="$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "${package}" 2>/dev/null || true)"
+    installed_version="$(box_exec rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' chatgpt 2>/dev/null || true)"
+    if [[ -n "${available_version}" && "${available_version}" == "${installed_version}" ]]; then
+        log "ChatGPT Desktop in ${DEV_BOX} is up to date at ${available_version}."
+        return 0
+    fi
     log "Installing ChatGPT Desktop inside ${DEV_BOX} ..."
     box_exec sudo dnf install --assumeyes "${package}"
     box_exec distrobox-export --app chatgpt
@@ -274,6 +286,31 @@ update_comfyui() {
 
 }
 
+check_comfyui() {
+    local target installed_revision current_revision
+    local -a targets=()
+    for target in host container; do
+        comfy_paths "${target}"
+        [[ -f "${COMFY_ROOT}/installed" ]] && targets+=("${target}")
+    done
+    if (( ${#targets[@]} == 0 )); then
+        log "No generic ComfyUI installation was found."
+        return 0
+    fi
+    current_revision="$(git ls-remote "${COMFY_REPOSITORY}" HEAD | awk '{print $1}')" || return 1
+    [[ -n "${current_revision}" ]] || { warn "Could not determine the current ComfyUI revision."; return 1; }
+    for target in "${targets[@]}"; do
+        comfy_paths "${target}"
+        installed_revision="$(git -C "${COMFY_SOURCE}" rev-parse HEAD 2>/dev/null || true)"
+        if [[ "${installed_revision}" == "${current_revision}" ]]; then
+            log "Generic ComfyUI (${target}) core is up to date (${installed_revision:0:12})."
+        else
+            log "Generic ComfyUI (${target}) core update available: ${installed_revision:0:12} -> ${current_revision:0:12}."
+        fi
+    done
+    log "Python dependency updates are resolved during installation."
+}
+
 launch_comfyui() {
     local target
     if [[ "${1:-}" == host || "${1:-}" == container ]]; then
@@ -332,7 +369,7 @@ install_menu() {
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-install-ai-app [chatgpt|claude|comfyui] [menu|host|container|update|launch|status]
+Usage: vimmite-install-ai-app [chatgpt|claude|comfyui] [menu|host|container|check|update|launch|status]
 
 The interactive menu offers Host installation or the vimmite-dev Distrobox.
 EOF
@@ -355,6 +392,7 @@ case "${app}" in
         case "${action}" in
             menu) install_menu comfyui ;;
             host|container) install_comfyui "${action}" ;;
+            check) check_comfyui ;;
             update) update_comfyui ;;
             launch) launch_comfyui "${@:3}" ;;
             status) status_app comfyui ;;

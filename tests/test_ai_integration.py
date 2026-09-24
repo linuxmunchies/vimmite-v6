@@ -148,6 +148,31 @@ distrobox() { echo DELETED; }
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertNotIn('DELETED', result.stdout)
 
+    def test_current_strix_images_leave_containers_intact(self):
+        overrides = '''
+require_commands() { :; }
+require_strix_halo() { :; }
+require_device_access() { :; }
+have_container() { :; }
+podman() {
+    if [[ "$1" == inspect || "$1 $2" == 'image inspect' ]]; then
+        printf 'sha256:unchanged\\n'
+    fi
+}
+distrobox() { echo UNEXPECTED_RECREATE; return 1; }
+confirm_container_reset() { echo UNEXPECTED_CONFIRMATION; return 1; }
+'''
+        for name, action in (
+            ('vimmite-strix-halo-comfyui', 'update_environment stable'),
+            ('vimmite-strix-halo-ai', 'update_backend vulkan'),
+        ):
+            with self.subTest(name=name):
+                result = self.run_functions(name, action, overrides)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('already up to date', result.stdout)
+                self.assertNotIn('UNEXPECTED_RECREATE', result.stdout)
+                self.assertNotIn('UNEXPECTED_CONFIRMATION', result.stdout)
+
     def test_failed_chatgpt_download_never_installs_stale_rpm(self):
         cache = self.home / '.cache/vimmite-ai'
         cache.mkdir(parents=True)
@@ -330,15 +355,20 @@ require_commands() { :; }
 require_strix_halo() { :; }
 require_device_access() { :; }
 have_container() { :; }
-podman() { echo "podman:$*"; }
-distrobox() { echo "distrobox:$*"; }
+podman() {
+    echo "podman:$*" >> "$HOME/events"
+    if [[ "$1" == inspect ]]; then echo old-image; fi
+    if [[ "$1 $2" == 'image inspect' ]]; then echo new-image; fi
+}
+distrobox() { echo "distrobox:$*" >> "$HOME/events"; }
 cleanup_old_repository_images() { :; }
 install_wrappers() { :; }
 verify_backend() { :; }
 container_exec() { :; }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertLess(result.stdout.index('podman:pull'), result.stdout.index('distrobox:rm'))
+        events = (self.home / 'events').read_text()
+        self.assertLess(events.index('podman:pull'), events.index('distrobox:rm'))
 
     def test_container_cli_failure_does_not_record_install(self):
         result = self.run_functions('vimmite-install-ai-cli', 'install_cli codex container', '''
@@ -372,9 +402,9 @@ box_shell() { cat; }
         result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = [line for line in result.stdout.splitlines() if line]
-        self.assertEqual(len(entries), 35)
+        self.assertEqual(len(entries), 36)
         for model_id in (
-            'qwen-image-21', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
+            'qwen-image-21', 'qwen-image-21-int8', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
             'glm-image', 'qwen-edit', 'sam', 'realesrgan', 'minimax', 'ltx-dev',
             'hunyuan-i2v', 'wan-i2v', 'wan-i2v-lightning',
         ):
@@ -387,6 +417,7 @@ box_shell() { cat; }
     def test_comfy_model_manifest_preserves_dependencies_and_diffusers_layout(self):
         result = self.run_functions('vimmite-strix-halo-comfyui', '''
 model_manifest qwen-image-21
+model_manifest qwen-image-21-int8
 model_manifest krea-turbo
 model_manifest qwen-gguf
 model_manifest glm-image
@@ -394,6 +425,7 @@ model_manifest wan-t2v-lightning
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Comfy-Org/Qwen-Image-2.1|diffusion_models/qwen_image_2.1_bf16.safetensors|diffusion_models/qwen_image_2.1_bf16.safetensors', result.stdout)
+        self.assertIn('Comfy-Org/Qwen-Image-2.1|text_encoders/qwen3vl_8b_int8_convrot.safetensors|text_encoders/qwen3vl_8b_int8_convrot.safetensors', result.stdout)
         self.assertIn('Comfy-Org/Krea-2|diffusion_models/krea2_turbo_bf16.safetensors|diffusion_models/krea2_turbo_bf16.safetensors', result.stdout)
         self.assertIn('unsloth/Qwen2.5-VL-7B-Instruct-GGUF|Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf|text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf', result.stdout)
         self.assertIn('zai-org/GLM-Image|*|diffusers/GLM-Image', result.stdout)

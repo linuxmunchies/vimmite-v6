@@ -53,6 +53,8 @@ container_exec() {
 usage() {
     cat <<'EOF'
 Usage: vimmite-install-ai-cli [codex|grok|pi|omp|claude|dsh|opencode|hermes] [host|container] [-- ARGS...]
+       vimmite-install-ai-cli update [codex|grok|pi|omp|claude|dsh|opencode|hermes] [host|container]
+       vimmite-install-ai-cli check [codex|grok|pi|omp|claude|dsh|opencode|hermes] [host|container]
        vimmite-install-ai-cli [menu|status|help]
 
 Install an AI coding CLI into the current user's environment.
@@ -307,6 +309,45 @@ install_cli() {
     fi
 }
 
+# npm publishes an exact version behind each selected dist-tag. Compare that
+# version with Vimmite's installation before running npm's global installer.
+update_cli() {
+    local cli="$1" target="$2" mode="${3:-update}" package_name package_spec installed_version available_version package_path
+    case "${cli}" in
+        codex) package_name='@openai/codex' ;;
+        dsh) package_name='@deepseek-ai/dsh' ;;
+        grok|pi|omp|claude|opencode|hermes)
+            note "${cli} (${target}): upstream installer does not provide a reliable version check."
+            [[ "${mode}" == check ]] && return 0
+            install_cli "${cli}" "${target}"
+            return
+            ;;
+        *) echo "Unknown AI CLI: ${cli}" >&2; return 2 ;;
+    esac
+    package_spec="${package_name}@$(cli_npm_tag "${cli}")"
+    if [[ "${target}" == container ]]; then
+        ensure_devbox || return 1
+        package_path="${container_home}/.local/lib/node_modules/${package_name}/package.json"
+        installed_version="$(container_exec node -e 'try { console.log(require(process.argv[1]).version) } catch (_) {}' "${package_path}")" || return 1
+        available_version="$(container_exec npm view "${package_spec}" version)" || return 1
+    elif [[ "${target}" == host ]]; then
+        package_path="${user_prefix}/lib/node_modules/${package_name}/package.json"
+        installed_version="$(node -e 'try { console.log(require(process.argv[1]).version) } catch (_) {}' "${package_path}")" || return 1
+        available_version="$(npm view "${package_spec}" version)" || return 1
+    else
+        echo "Unknown installation target: ${target}" >&2
+        return 2
+    fi
+    [[ -n "${available_version}" ]] || { fail "Could not determine the current version of ${package_spec}."; return 1; }
+    if [[ "${installed_version}" == "${available_version}" ]]; then
+        note "${cli} (${target}) is up to date at ${installed_version}."
+        return 0
+    fi
+    note "${cli} (${target}): ${installed_version:-not managed} -> ${available_version}"
+    [[ "${mode}" == check ]] && return 0
+    install_cli "${cli}" "${target}"
+}
+
 # Harnesses land in whichever directory their installer prefers, so look
 # wherever container_exec puts them on PATH rather than in ~/.local/bin alone.
 container_binary() {
@@ -398,6 +439,10 @@ install_cli_with_target() {
 
 case "${1:-menu}" in
     run-container) shift; ensure_devbox; container_exec "$@" ;;
+    check|update)
+        [[ $# == 3 ]] || { usage >&2; exit 2; }
+        update_cli "$2" "$3" "$1"
+        ;;
     menu) menu ;;
     status) status ;;
     help|-h|--help) usage ;;

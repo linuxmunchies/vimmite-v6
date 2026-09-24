@@ -267,9 +267,12 @@ are inaccessible, fix host membership/ACLs and re-login, then recreate the
 container so `keep-groups` captures the new supplementary groups. Do not solve
 this with world-writable device rules.
 
-Use the menu Update/recreate actions to pull a newer rebuild of the same stable
-tag, replace only the selected Distrobox, rerun its GPU check, and refresh the
-wrappers. Cleanup is limited to dangling images from
+Use the menu Update actions to check the selected stable tag. If the pulled
+image ID matches the installed container, the container is left intact. A new
+image replaces only that Distrobox, reruns its GPU check, and refreshes the
+wrappers. Use `ujust strix-halo-ai -- refresh [vulkan|rocm|both]` for an
+intentional recreation from the same image. Failed recreation attempts restore
+the previous image. Cleanup is limited to dangling images from
 `docker.io/kyuz0/amd-strix-halo-toolboxes`; it never broadly prunes Podman.
 
 Upstream resources:

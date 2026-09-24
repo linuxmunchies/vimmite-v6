@@ -60,7 +60,7 @@ downloads. Escape or Back leaves the menu; those jobs keep running. Each choice
 starts with two columns, `disk=` (this PC) and `NAS=` (foxraid), each `yes`,
 `2/3`, `no`, or `?` until you scan. The first visit offers a NAS scan; you
 can run **Scan NAS** again later. Image generation lists **Qwen Image 2.1**
-and **Krea 2 Turbo** at the top. Hugging Face, NAS, and upload jobs run in the
+in BF16 and INT8, followed by **Krea 2 Turbo**. Hugging Face, NAS, and upload jobs run in the
 background so you can queue another model without waiting; **Downloads** shows
 logs and can stop a job. **Full status list** prints the complete table. NAS
 transfers use
@@ -77,11 +77,16 @@ Direct commands are also available:
 
 ```bash
 ujust strix-halo-comfyui -- install stable
+ujust strix-halo-comfyui -- check both
+ujust strix-halo-comfyui -- update both
+ujust strix-halo-comfyui -- refresh stable
+ujust strix-halo-comfyui -- qwen21 both
 ujust strix-halo-comfyui -- launch stable
 ujust strix-halo-comfyui -- models stable
 ujust strix-halo-comfyui -- download-models
 ujust strix-halo-comfyui -- list-models
 ujust strix-halo-comfyui -- model-status qwen-image-21
+ujust strix-halo-comfyui -- model-status qwen-image-21-int8
 ujust strix-halo-comfyui -- download-model qwen-image
 ujust strix-halo-comfyui -- download-model-nas qwen-gguf
 ujust strix-halo-comfyui -- upload-model krea-turbo
@@ -92,6 +97,25 @@ ujust strix-halo-comfyui -- shell experimental
 ujust strix-halo-comfyui -- status both
 ujust strix-halo-comfyui -- diagnostics
 ```
+
+### Qwen Image 2.1 in both channels
+
+Run `ujust strix-halo-comfyui -- qwen21 both` once after installing both
+containers. This installs ComfyUI v0.37.0, the first official release with
+native Qwen Image 2.1 nodes, when the upstream toolbox image is older. The
+toolbox's ROCm PyTorch, torchvision, and torchaudio versions stay pinned during
+this update. A marker in each persistent user directory restores Qwen support
+after future container recreation; a newer upstream image with the required
+nodes is used as supplied.
+
+The command also adds three BF16 workflows (text to image, image edit, and
+background removal) to each channel's **Workflows** list. They use the BF16
+diffusion model and text encoder from `qwen-image-21`, plus its VAE. Both
+channels share the same model folder, so one download serves both. The official
+Template Library workflows default to INT8; download
+`qwen-image-21-int8` to use those without changing their model selectors.
+Existing user workflows are never overwritten. Restart a running ComfyUI
+server after enabling Qwen support so it loads the new nodes.
 
 ## Persistent data
 
@@ -138,16 +162,23 @@ checked for compatibility with the selected image.
 Normal launch reuses the existing Distrobox. It does not pull an image or change
 channels behind the user's back.
 
-**Update/refresh** is explicit and requires confirmation. It:
+**Check** pulls the selected channel's current image and reports whether its
+image ID differs from the installed container, without recreating it. **Update**
+uses the same comparison and then:
 
 1. checks Strix Halo hardware and device access;
 2. pulls the current image for only the selected channel;
-3. deletes and recreates only that environment's Distrobox with the same
+3. compares its image ID with the installed container and stops if they match;
+4. if the image changed, asks for confirmation, then recreates that Distrobox with the same
    rootless GPU options;
-4. reruns upstream persistent-path setup and seeds any newly named bundled
+5. reruns upstream persistent-path setup and seeds any newly named bundled
    workflows;
-5. checks PyTorch GPU visibility; and
-6. removes only dangling image layers from this ComfyUI image repository.
+6. restores enabled Qwen Image 2.1 support, checks PyTorch GPU visibility; and
+7. removes only dangling image layers from this ComfyUI image repository.
+
+`ujust strix-halo-comfyui -- refresh stable` intentionally recreates a
+container even when its image has not changed. It uses the same confirmation
+and rollback path.
 
 The pull happens before deletion, so a failed download leaves the installed
 container intact. The previous image ID is retained during recreation; if the

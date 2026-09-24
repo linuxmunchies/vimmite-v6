@@ -32,17 +32,18 @@ cli_command() {
 }
 
 update_base_harnesses() {
-    local cli command_name updated=0 failures=0
+    local mode="${1:-update}" cli command_name updated=0 failures=0 verb=Updating
+    [[ "${mode}" == check ]] && verb=Checking
     for cli in "${AI_CLIS[@]}"; do
         command_name="$(cli_command "${cli}")"
         if host_has_command "${command_name}"; then
-            log "Updating host ${cli} ..."
-            /usr/libexec/vimmite-install-ai-cli "${cli}" host || { warn "Host ${cli} update failed."; failures=1; }
+            log "${verb} host ${cli} ..."
+            /usr/libexec/vimmite-install-ai-cli "${mode}" "${cli}" host || { warn "Host ${cli} ${mode} failed."; failures=1; }
             updated=1
         fi
         if box_has_command "${command_name}"; then
-            log "Updating ${cli} in ${DEV_BOX} ..."
-            /usr/libexec/vimmite-install-ai-cli "${cli}" container || { warn "${DEV_BOX} ${cli} update failed."; failures=1; }
+            log "${verb} ${cli} in ${DEV_BOX} ..."
+            /usr/libexec/vimmite-install-ai-cli "${mode}" "${cli}" container || { warn "${DEV_BOX} ${cli} ${mode} failed."; failures=1; }
             updated=1
         fi
     done
@@ -51,8 +52,9 @@ update_base_harnesses() {
 }
 
 update_devbox() {
+    local mode="${1:-update}"
     if devbox_exists; then
-        /usr/libexec/vimmite-devbox update
+        /usr/libexec/vimmite-devbox "${mode}"
     else
         log "${DEV_BOX} is not installed; skipping its update."
     fi
@@ -102,7 +104,8 @@ update_desktop_packages() {
 }
 
 update_comfyui() {
-    /usr/libexec/vimmite-install-ai-app comfyui update
+    local mode="${1:-update}"
+    /usr/libexec/vimmite-install-ai-app comfyui "${mode}"
     if command -v podman >/dev/null 2>&1; then
         local targets=() target
         podman container exists strix-halo-comfyui-stable >/dev/null 2>&1 && targets+=(stable)
@@ -112,12 +115,13 @@ update_comfyui() {
         else
             target="${targets[0]}"
             ((${#targets[@]} == 2)) && target=both
-            /usr/libexec/vimmite-strix-halo-comfyui update "${target}"
+            /usr/libexec/vimmite-strix-halo-comfyui "${mode}" "${target}"
         fi
     fi
 }
 
 update_strix_halo() {
+    local mode="${1:-update}"
     if command -v podman >/dev/null 2>&1 && \
         { podman container exists strix-halo-vulkan >/dev/null 2>&1 || podman container exists strix-halo-rocm >/dev/null 2>&1; }; then
         local targets=() target
@@ -125,7 +129,7 @@ update_strix_halo() {
         podman container exists strix-halo-rocm >/dev/null 2>&1 && targets+=(rocm)
         target="${targets[0]}"
         ((${#targets[@]} == 2)) && target=both
-        /usr/libexec/vimmite-strix-halo-ai update "${target}"
+        /usr/libexec/vimmite-strix-halo-ai "${mode}" "${target}"
     else
         log "No Strix Halo llama.cpp containers were found."
     fi
@@ -138,6 +142,62 @@ update_ramalama() {
     else
         log "Managed RamaLama CLI is not installed; skipping."
     fi
+}
+
+check_desktop_packages() {
+    local found=0
+    if rpm -q chatgpt >/dev/null 2>&1; then
+        log "ChatGPT Desktop (host): installed; current RPM version is compared during update."
+        found=1
+    fi
+    if rpm -q claude-desktop-unofficial >/dev/null 2>&1; then
+        log "Claude Desktop (host): installed; repository updates are checked by the RPM updater."
+        found=1
+    fi
+    if devbox_exists; then
+        local -a enter_flags=(--name "${DEV_BOX}")
+        [[ -t 0 && -t 1 ]] || enter_flags+=(--no-tty)
+        if distrobox enter "${enter_flags[@]}" -- rpm -q chatgpt >/dev/null 2>&1; then
+            log "ChatGPT Desktop (${DEV_BOX}): installed; current RPM version is compared during update."
+            found=1
+        fi
+        if distrobox enter "${enter_flags[@]}" -- rpm -q claude-desktop-unofficial >/dev/null 2>&1; then
+            log "Claude Desktop (${DEV_BOX}): installed; repository updates are checked by DNF."
+            found=1
+        fi
+    fi
+    (( found == 1 )) || log "No ChatGPT/Claude desktop RPMs were found."
+}
+
+check_ramalama() {
+    local cli_dir="${RAMALAMA_CLI_DIR:-${HOME}/.local/share/ramalama-cli}"
+    if [[ -x "${RAMALAMA_BIN:-${cli_dir}/bin/ramalama}" ]]; then
+        log "RamaLama: installed; pip resolves newer versions during update."
+    else
+        log "Managed RamaLama CLI is not installed."
+    fi
+}
+
+check_target() {
+    local target="${1:-all}" item failures=0
+    case "${target}" in
+        all)
+            for item in devbox base comfyui strix desktop ramalama; do
+                if ! bash "${BASH_SOURCE[0]}" check "${item}"; then
+                    warn "${item} check failed."
+                    failures=1
+                fi
+            done
+            return "${failures}"
+            ;;
+        base|harnesses) update_base_harnesses check ;;
+        devbox) update_devbox check ;;
+        comfyui) update_comfyui check ;;
+        strix|strix-halo) update_strix_halo check ;;
+        desktop|desktop-rpms) check_desktop_packages ;;
+        ramalama) check_ramalama ;;
+        *) echo "Unknown check target: ${target}" >&2; return 2 ;;
+    esac
 }
 
 run_all() {
@@ -180,6 +240,7 @@ menu() {
             "Update Strix Halo AI" \
             "Update ChatGPT/Claude desktop RPMs" \
             "Update RamaLama" \
+            "Check installed AI software" \
             "Back")" || return 0
         case "${choice}" in
             "Update everything") run_all ;;
@@ -189,6 +250,7 @@ menu() {
             "Update Strix Halo AI") update_strix_halo ;;
             "Update ChatGPT/Claude desktop RPMs") update_desktop_packages ;;
             "Update RamaLama") update_ramalama ;;
+            "Check installed AI software") check_target all ;;
             "Back") return 0 ;;
         esac
         [[ -t 0 ]] && read -r -p "Press Enter to continue..." _ || true
@@ -197,6 +259,7 @@ menu() {
 
 case "${1:-menu}" in
     menu) menu ;;
+    check) check_target "${2:-all}" ;;
     all|update) run_all ;;
     base|harnesses) update_base_harnesses ;;
     devbox) update_devbox ;;
@@ -205,7 +268,7 @@ case "${1:-menu}" in
     ramalama) update_ramalama ;;
     desktop|desktop-rpms) update_desktop_packages ;;
     help|-h|--help)
-        echo "Usage: vimmite-ai-update [menu|all|base|devbox|comfyui|strix|desktop|ramalama]"
+        echo "Usage: vimmite-ai-update [menu|check [all|base|devbox|comfyui|strix|desktop|ramalama]|all|base|devbox|comfyui|strix|desktop|ramalama]"
         ;;
     *) echo "Unknown update target: $1" >&2; exit 2 ;;
 esac

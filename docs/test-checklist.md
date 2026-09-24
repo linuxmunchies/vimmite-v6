@@ -139,14 +139,20 @@ rebase.
       downloaded during container creation or normal launch.
 - [ ] The ComfyUI model submenu shows a short color summary with live download
       percents, prefixes each choice with local YES/SOME/NO and a NAS column,
-      can scan the NAS share, lists Qwen Image 2.1 and Krea 2 Turbo in image
+      can scan the NAS share, lists Qwen Image 2.1 BF16/INT8 and Krea 2 Turbo in image
       generation, keeps background downloads running after Escape/Back, and
       preserves destination subdirectories including GLM-Image's Diffusers layout.
+- [ ] `qwen21 both` installs native Qwen Image 2.1 support in stable and
+      experimental while preserving ROCm PyTorch, and seeds BF16 workflows
+      without replacing an existing user workflow.
+- [ ] Both channels recognize the shared BF16 model, text encoder, and VAE and
+      complete a small text-to-image generation.
 - [ ] Diagnostics report the actual PyTorch/HIP/ROCm SDK values and ComfyUI
       revision without claiming a fixed ROCm major version.
-- [ ] Refresh requires confirmation, pulls before deleting, recreates only the
-      selected channel, and warns that container-local packages/custom nodes
-      are discarded.
+- [ ] Update pulls before deleting, skips recreation when the image ID is
+      unchanged, and requires confirmation when it changes. Explicit refresh
+      recreates only the selected channel and warns that container-local
+      packages/custom nodes are discarded.
 - [ ] A forced recreation or GPU-check failure restores the selected ComfyUI
       container from its prior image ID and leaves HOME data untouched.
 - [ ] ComfyUI integration adds no host ROCm, PyTorch, ComfyUI, SELinux, udev,

@@ -28,6 +28,8 @@ readonly LEGACY_OUTPUT_DIR="${HOME}/comfy-outputs"
 readonly LEGACY_INPUT_DIR="${HOME}/comfy-inputs"
 readonly LEGACY_USER_ROOT="${HOME}/comfy-user"
 readonly IMAGE_REPOSITORY="docker.io/kyuz0/amd-strix-halo-comfyui"
+readonly QWEN21_COMFY_RELEASE="v0.37.0"
+readonly QWEN21_TEMPLATES_VERSION="0.11.66"
 readonly COMFY_URL="http://127.0.0.1:8000"
 readonly CONTAINER_FLAGS='--device /dev/dri --device /dev/kfd --group-add keep-groups --security-opt seccomp=unconfined'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -253,6 +255,131 @@ SNIPPET
 EOF
 }
 
+qwen21_marker() {
+    printf '%s/.qwen-image-2.1-enabled\n' "$(environment_user_dir "$1")"
+}
+
+qwen21_core_ready() {
+    local container="$1"
+    container_exec "${container}" grep -Fq 'node_id="TextEncodeQwenImage21"' /opt/ComfyUI/comfy_extras/nodes_qwen.py \
+        && container_exec "${container}" /opt/venv/bin/python -c '
+from importlib.metadata import version
+from packaging.version import Version
+raise SystemExit(0 if Version(version("comfyui-workflow-templates")) >= Version("0.11.66") else 1)
+' >/dev/null 2>&1
+}
+
+# The current upstream toolbox images predate Qwen Image 2.1. Keep their ROCm
+# PyTorch packages while installing the first official ComfyUI release that
+# includes the native nodes and workflow templates.
+install_qwen21_core() {
+    local environment="$1" container
+    container="$(environment_container "${environment}")"
+    if qwen21_core_ready "${container}"; then
+        log "${container} already has Qwen Image 2.1 core nodes and templates."
+        return 0
+    fi
+    log "Updating ${container} to ComfyUI ${QWEN21_COMFY_RELEASE} for Qwen Image 2.1 ..."
+    container_exec "${container}" env "QWEN21_COMFY_RELEASE=${QWEN21_COMFY_RELEASE}" bash -s <<'EOF' || return 1
+set -euo pipefail
+cd /opt/ComfyUI
+if [[ -n "$(git -c safe.directory=/opt/ComfyUI status --porcelain)" ]]; then
+    echo "ComfyUI has local source changes; refusing to overwrite them." >&2
+    exit 1
+fi
+old_commit="$(git -c safe.directory=/opt/ComfyUI rev-parse HEAD)"
+if ! grep -Fq 'node_id="TextEncodeQwenImage21"' comfy_extras/nodes_qwen.py; then
+    git -c safe.directory=/opt/ComfyUI fetch --depth=1 https://github.com/Comfy-Org/ComfyUI.git "refs/tags/${QWEN21_COMFY_RELEASE}"
+    git -c safe.directory=/opt/ComfyUI checkout --detach FETCH_HEAD
+fi
+constraints="$(mktemp)"
+trap 'rm -f -- "${constraints}"' EXIT
+/opt/venv/bin/python - "${constraints}" <<'PY'
+import importlib.metadata as metadata
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    for package in ("torch", "torchvision", "torchaudio"):
+        try:
+            print(f"{package}=={metadata.version(package)}", file=output)
+        except metadata.PackageNotFoundError:
+            pass
+PY
+if ! /opt/venv/bin/python -m pip install --constraint "${constraints}" -r requirements.txt; then
+    git -c safe.directory=/opt/ComfyUI checkout --detach "${old_commit}" || true
+    echo "ComfyUI requirements failed; the previous source revision was restored." >&2
+    exit 1
+fi
+grep -Fq 'node_id="TextEncodeQwenImage21"' comfy_extras/nodes_qwen.py
+EOF
+    qwen21_core_ready "${container}" || { warn "Qwen Image 2.1 nodes or templates are still missing in ${container}."; return 1; }
+    log "Qwen Image 2.1 core support is ready in ${container}."
+}
+
+seed_qwen21_bf16_workflows() {
+    local environment="$1" container user_dir
+    container="$(environment_container "${environment}")"
+    user_dir="$(environment_user_dir "${environment}")"
+    container_exec "${container}" /opt/venv/bin/python - "${user_dir}/default/workflows" <<'PY'
+import importlib.resources
+import json
+import pathlib
+import sys
+
+source = importlib.resources.files("comfyui_workflow_templates_json").joinpath("templates")
+destination = pathlib.Path(sys.argv[1])
+destination.mkdir(parents=True, exist_ok=True)
+names = {
+    "image_qwen_image_2_1_t2i.json": "qwen-image-2.1-text-to-image-bf16.json",
+    "image_qwen_image_2_1_image_edit.json": "qwen-image-2.1-image-edit-bf16.json",
+    "image_qwen_image_2_1_background_removal.json": "qwen-image-2.1-background-removal-bf16.json",
+}
+replacements = {
+    "qwen_image_2.1_int8_convrot.safetensors": "qwen_image_2.1_bf16.safetensors",
+    "qwen3vl_8b_int8_convrot.safetensors": "qwen3vl_8b_bf16.safetensors",
+}
+
+def use_bf16(value):
+    if isinstance(value, str):
+        for old, new in replacements.items():
+            value = value.replace(old, new)
+        return value
+    if isinstance(value, list):
+        return [use_bf16(item) for item in value]
+    if isinstance(value, dict):
+        return {key: use_bf16(item) for key, item in value.items()}
+    return value
+
+for original, target in names.items():
+    output = destination / target
+    if output.exists():
+        print(f"Keeping existing workflow: {output}")
+        continue
+    with source.joinpath(original).open("r", encoding="utf-8") as stream:
+        workflow = use_bf16(json.load(stream))
+    with output.open("x", encoding="utf-8") as stream:
+        json.dump(workflow, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    print(f"Added BF16 workflow: {output}")
+PY
+}
+
+restore_qwen21_support() {
+    local environment="$1"
+    [[ -f "$(qwen21_marker "${environment}")" ]] || return 0
+    install_qwen21_core "${environment}"
+    seed_qwen21_bf16_workflows "${environment}"
+}
+
+enable_qwen21_environment() {
+    local environment="$1"
+    require_environment "${environment}"
+    install_qwen21_core "${environment}"
+    seed_qwen21_bf16_workflows "${environment}"
+    mkdir -p "$(environment_user_dir "${environment}")"
+    touch "$(qwen21_marker "${environment}")"
+    log "Qwen Image 2.1 support will be restored after future container refreshes."
+}
+
 sanity_check() {
     local environment="$1" container output
     container="$(environment_container "${environment}")"
@@ -302,8 +429,9 @@ create_environment() {
     image="$(environment_image "${environment}")"
 
     if have_container "${container}"; then
-        log "${container} already exists; leaving it intact. Use Update/refresh to replace it."
+        log "${container} already exists; leaving it intact. Use Update to check for a newer image."
         setup_persistence "${environment}"
+        restore_qwen21_support "${environment}"
         ensure_comfyui_manager "${container}" 1
         sanity_check "${environment}"
         return
@@ -319,6 +447,7 @@ create_environment() {
         --no-entry \
         --additional-flags "${CONTAINER_FLAGS}"
     setup_persistence "${environment}"
+    restore_qwen21_support "${environment}"
     ensure_comfyui_manager "${container}" 1
     sanity_check "${environment}"
     log "$(environment_label "${environment}") ComfyUI is ready. Launch it from the menu or run: ujust strix-halo-comfyui -- launch ${environment}"
@@ -348,7 +477,7 @@ cleanup_old_images() {
 }
 
 update_environment() {
-    local environment="$1" container image previous_image_id
+    local environment="$1" force="${2:-0}" mode="${3:-update}" container image previous_image_id current_image_id
     require_commands
     require_strix_halo
     require_device_access rocm
@@ -357,14 +486,28 @@ update_environment() {
     have_container "${container}" || die "${container} is not installed; choose Install/create instead."
     previous_image_id="$(podman inspect --format '{{.Image}}' "${container}" 2>/dev/null || true)"
     [[ -n "${previous_image_id}" ]] || die "Could not determine the current image ID for ${container}; refusing an update without a rollback target."
+    log "Checking the current ${image} ..."
+    podman pull --quiet "${image}" >/dev/null
+    current_image_id="$(podman image inspect --format '{{.Id}}' "${image}")"
+    [[ -n "${current_image_id}" ]] || die "Could not determine the pulled image ID for ${image}."
+    if [[ "${mode}" == check ]]; then
+        if [[ "${current_image_id}" == "${previous_image_id}" ]]; then
+            log "${container} is up to date (${current_image_id})."
+        else
+            log "An update is available for ${container}: ${previous_image_id} -> ${current_image_id}."
+        fi
+        return 0
+    fi
+    if [[ "${force}" != 1 && "${current_image_id}" == "${previous_image_id}" ]]; then
+        log "${container} is already up to date (${current_image_id}); no container changes were made."
+        return 0
+    fi
     if ! confirm_container_reset "Update/refresh" "${container}"; then
         log "Update canceled; ${container} was not changed."
         return 0
     fi
 
     ensure_host_data "${environment}"
-    log "Pulling the current ${image} before replacing the container ..."
-    podman pull "${image}"
     distrobox rm --force "${container}"
     if distrobox create \
             --name "${container}" \
@@ -373,6 +516,7 @@ update_environment() {
             --no-entry \
             --additional-flags "${CONTAINER_FLAGS}" \
             && setup_persistence "${environment}" \
+            && restore_qwen21_support "${environment}" \
             && ensure_comfyui_manager "${container}" 1 \
             && sanity_check "${environment}"; then
         cleanup_old_images
@@ -394,6 +538,14 @@ update_environment() {
         die "Refresh failed, but ${container} was restored from its previous image."
     fi
     die "Refresh failed and the previous ${container} could not be restored automatically. Persistent HOME data remains untouched."
+}
+
+refresh_environment() {
+    update_environment "$1" 1
+}
+
+check_environment() {
+    update_environment "$1" 0 check
 }
 
 remove_environment() {
@@ -428,6 +580,7 @@ launch_environment() {
     user_dir="$(environment_user_dir "${environment}")"
     ensure_host_data "${environment}"
     setup_persistence "${environment}"
+    restore_qwen21_support "${environment}"
     ensure_comfyui_manager "${container}"
     log "Launching $(environment_label "${environment}") ComfyUI at ${COMFY_URL}"
     log "It is bound locally; stop it with Ctrl+C."
@@ -448,6 +601,7 @@ enter_environment() {
 model_catalog() {
     cat <<'EOF'
 qwen-image-21|image|Qwen Image 2.1 7B BF16 (~14.2 GB + dependencies)
+qwen-image-21-int8|image|Qwen Image 2.1 INT8 (official template, ~7.3 GB + dependencies)
 krea-turbo|image|Krea 2 Turbo BF16 (~26.3 GB + dependencies)
 qwen-image|image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
 qwen-lightning|image|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
@@ -548,6 +702,10 @@ model_manifest() {
         qwen-image-21)
             model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_bf16.safetensors
             model_file Comfy-Org/Qwen-Image-2.1 text_encoders/qwen3vl_8b_bf16.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
+        qwen-image-21-int8)
+            model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 text_encoders/qwen3vl_8b_int8_convrot.safetensors
             model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
         qwen-image|qwen-edit)
             if [[ "${id}" == qwen-image ]]; then
@@ -1859,7 +2017,8 @@ Persistent shared data:
   Per-environment workflows/settings: ${USER_ROOT}/{stable,experimental}
 
 Normal launch reuses the installed container and never pulls an image. Update
-explicitly pulls the selected channel and recreates only that container. Changes
+checks the selected channel and recreates its container only when the image
+changes. Refresh recreates it even when the image is unchanged. Changes
 made solely in /opt, /usr, or other container system paths are disposable.
 
 The upstream start_comfy_ui launcher supplies current Strix Halo workarounds and
@@ -1871,6 +2030,9 @@ Direct commands:
   ujust strix-halo-comfyui -- launch [stable|experimental]
   ujust strix-halo-comfyui -- shell [stable|experimental]
   ujust strix-halo-comfyui -- update [stable|experimental|both]
+  ujust strix-halo-comfyui -- check [stable|experimental|both]
+  ujust strix-halo-comfyui -- refresh [stable|experimental|both]
+  ujust strix-halo-comfyui -- qwen21 [stable|experimental|both]
   ujust strix-halo-comfyui -- models [stable|experimental]
   ujust strix-halo-comfyui -- download-models
   ujust strix-halo-comfyui -- list-models
@@ -1937,7 +2099,10 @@ environment_menu() {
             "Install/create" \
             "Launch locally" \
             "Enter shell" \
-            "Update/refresh" \
+            "Check for updates" \
+            "Update if newer" \
+            "Recreate container" \
+            "Enable Qwen Image 2.1" \
             "Open Model Manager" \
             "Show diagnostics" \
             "Remove container" \
@@ -1946,7 +2111,10 @@ environment_menu() {
             "Install/create") create_environment "${environment}" ;;
             "Launch locally") launch_environment "${environment}" ;;
             "Enter shell") enter_environment "${environment}" ;;
-            "Update/refresh") update_environment "${environment}" ;;
+            "Check for updates") check_environment "${environment}" ;;
+            "Update if newer") update_environment "${environment}" ;;
+            "Recreate container") refresh_environment "${environment}" ;;
+            "Enable Qwen Image 2.1") enable_qwen21_environment "${environment}" ;;
             "Open Model Manager") model_manager "${environment}" ;;
             "Show diagnostics") diagnose_environment "${environment}" ;;
             "Remove container") remove_environment "${environment}" ;;
@@ -2000,7 +2168,7 @@ run_for_target() {
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|update|models|status|remove|diagnostics|help] [stable|experimental|both]
+Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|check|update|refresh|qwen21|models|status|remove|diagnostics|help] [stable|experimental|both]
        vimmite-strix-halo-comfyui [download-models|list-models|upload-models|download-jobs|scan-nas]
        vimmite-strix-halo-comfyui model-status [MODEL_ID|image|edit|segment|upscale|video]
        vimmite-strix-halo-comfyui [model-files|download-model|download-model-nas|upload-model] MODEL_ID
@@ -2078,9 +2246,10 @@ PY
                 upload-model) upload_model "$2" ;;
             esac
             ;;
-        install|update|remove)
+        install|check|update|refresh|qwen21|remove)
             [[ "${target}" =~ ^(stable|experimental|both)$ ]] || { usage >&2; exit 2; }
             if [[ "${action}" == install ]]; then action=create; fi
+            if [[ "${action}" == qwen21 ]]; then action=enable_qwen21; fi
             run_for_target "${action}" "${target}"
             ;;
         launch|shell|models)

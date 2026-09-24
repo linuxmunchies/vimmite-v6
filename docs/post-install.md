@@ -107,12 +107,23 @@ The direct compatibility commands remain available for automation, including
 
 ```bash
 ujust ai-update
+ujust ai-update check
 ```
 
 It can update all installed AI software or an individual area: coding
 harnesses, `vimmite-dev`, generic and Strix Halo ComfyUI, Strix Halo llama.cpp
 containers, and installed ChatGPT/Claude desktop RPMs. Host RPM updates on
 Vimmite are scheduled through `rpm-ostree`; a reboot may be required.
+Strix Halo container updates compare the pulled image ID with the installed
+container and skip recreation when they match. npm-based Codex and DSH updates
+compare the installed package with the configured registry tag; ChatGPT Desktop
+skips installation when its downloaded RPM matches the installed version.
+Use each Strix manager's `refresh` action to intentionally recreate a container
+from an unchanged image.
+`check` reports available updates without changing installed applications or
+containers. It may refresh package metadata or cache a pulled image to compare
+its exact ID. Installers that do not publish a reliable version check are
+reported as such and run only when an update is requested.
 
 The coding-harness choices are:
 
