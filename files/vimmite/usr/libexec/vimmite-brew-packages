@@ -18,9 +18,10 @@ readonly formulae=(
   hf
 )
 readonly retired_formulae=(
-  # btop moved to the host RPM. No image script uses eza, so retire it in favor
-  # of the host-selected lsd listing tool.
+  # btop and eza are provided as host RPMs. Retire any old Brew copies so the
+  # image-selected versions take precedence.
   btop
+  lsd
   eza
 )
 
