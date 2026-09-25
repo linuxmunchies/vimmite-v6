@@ -16,7 +16,7 @@ install:
     - rclone
     - tmux
     - tree
-    - lsd
+    - eza
     - btop
     - restic
     # setcap/getcap for the build-time btop CAP_PERFMON script
