@@ -45,9 +45,10 @@ make the package public.
 Start with the [installation guide](docs/installation.md), which covers building
 an ISO, installing it, or rebasing an existing Fedora Atomic desktop. Local ISO
 builds need Podman and one sudo login for rootful Lorax; they do not need KVM.
-You can also run the **Build installer ISO** workflow from the Actions tab.
-The image workflow publishes container images; it does not attach ISOs. Back up
-personal files before installing or rebasing.
+Successful image builds on `main` also create timestamped installer ISOs in
+[Releases](https://github.com/linuxmunchies/vimmite-v6/releases). You can also
+run the **Build installer ISO** workflow from the Actions tab. Back up personal
+files before installing or rebasing.
 
 After booting, connect to the network so application setup can finish, then run:
 
@@ -70,10 +71,11 @@ Atomic rollback covers the system deployment; personal files need a separate
 ## Builds and publication
 
 GitHub Actions builds and publishes automatically on non-documentation pushes
-and the daily schedule. You can also start a build with `workflow_dispatch`.
-There is no manual release-approval input. Pull requests run validation and an
-image build without publishing. Installer ISOs are a separate
-`workflow_dispatch` job, **Build installer ISO**.
+and the daily schedule. After a successful `main` image build, it builds a
+netinstall ISO and publishes the ISO and checksum in a timestamped release. You
+can also start a build with `workflow_dispatch`. There is no manual
+release-approval input. Pull requests run validation and an image build without
+publishing. **Build installer ISO** remains available for manual ISO builds.
 
 Images are signed using the `SIGNING_SECRET` Actions secret. Only the public
 verification key, [`cosign.pub`](cosign.pub), belongs in this repository.

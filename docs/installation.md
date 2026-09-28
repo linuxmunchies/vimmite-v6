@@ -1,8 +1,9 @@
 # Installation and updates
 
-Run repository scripts from the repository root. The image workflow publishes
-container images automatically. ISO creation is a separate local command or
-the **Build installer ISO** workflow.
+Run repository scripts from the repository root. After a successful `main`
+image build, the workflow publishes a timestamped installer ISO and checksum in
+[Releases](https://github.com/linuxmunchies/vimmite-v6/releases). You can also
+build an ISO locally or run the **Build installer ISO** workflow manually.
 
 ## Install from an ISO
 
@@ -76,9 +77,13 @@ repository. If GitHub CLI reports an expired login, run `gh auth login
 --hostname github.com`, then `gh auth refresh --hostname github.com --scopes
 read:packages`, before retrying the helper.
 
-You can also build the same netinstall ISO without a local administrator
-password from the Actions tab: **Build installer ISO**. Download the artifact
-when the run finishes.
+Download the newest ISO and its checksum from
+[Releases](https://github.com/linuxmunchies/vimmite-v6/releases). If the ISO
+exceeds GitHub's per-file limit, the release contains numbered parts and
+instructions for joining them before checking the SHA-256 checksum. You can
+also build the same netinstall ISO without a local administrator password from
+the Actions tab: **Build installer ISO**. Download that run's artifact when it
+finishes.
 
 ### Write and boot the installer
 
