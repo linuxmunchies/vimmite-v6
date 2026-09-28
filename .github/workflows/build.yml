@@ -85,3 +85,96 @@ jobs:
 
           # enabled by default, disable if your image is small and you want faster builds
           maximize_build_space: true
+
+  iso:
+    needs: bluebuild
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    name: Build and release Vimmite V6 ISO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      packages: read
+    env:
+      IMAGE_NAME: vimmite-v6-kinoite
+      IMAGE_REPO: ghcr.io/linuxmunchies
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v2.0.0
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Name timestamped ISO and release
+        id: release_name
+        shell: bash
+        run: |
+          set -euo pipefail
+          timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+          echo "iso_name=vimmite-v6-kinoite-${timestamp}.iso" >> "$GITHUB_OUTPUT"
+          echo "tag=iso-${timestamp}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$timestamp" >> "$GITHUB_OUTPUT"
+
+      - name: Build ISO from published image
+        id: build
+        uses: jasonn3/build-container-installer@v1.5.0
+        with:
+          arch: x86_64
+          image_name: ${{ env.IMAGE_NAME }}
+          image_repo: ${{ env.IMAGE_REPO }}
+          image_tag: latest
+          image_signed: "true"
+          version: "44"
+          variant: Kinoite
+          iso_name: ${{ steps.release_name.outputs.iso_name }}
+          secure_boot_key_url: https://github.com/ublue-os/bazzite/raw/main/secure_boot.der
+          enrollment_password: universalblue
+          enable_cache_dnf: "true"
+          enable_cache_skopeo: "false"
+          enable_flatpak_dependencies: "false"
+
+      - name: Publish ISO release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISO_PATH: ${{ steps.build.outputs.iso_path }}
+          ISO_NAME: ${{ steps.build.outputs.iso_name }}
+          RELEASE_TAG: ${{ steps.release_name.outputs.tag }}
+          RELEASE_TIMESTAMP: ${{ steps.release_name.outputs.timestamp }}
+        run: |
+          set -euo pipefail
+          iso="${ISO_PATH}/${ISO_NAME}"
+          checksum="${iso}-CHECKSUM"
+          test -s "$iso"
+          test -s "$checksum"
+
+          notes="${RUNNER_TEMP}/iso-release-notes.md"
+          printf 'Installer ISO built from the signed `%s/%s:latest` image after the image build succeeded.\n\n' \
+            "$IMAGE_REPO" "$IMAGE_NAME" > "$notes"
+          printf 'Source commit: `%s`\nBuild run: %s\n\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$notes"
+          printf 'This is a netinstall ISO; installation needs network access to pull the image. Verify the download using the attached checksum file.\n' >> "$notes"
+
+          assets=("$iso" "$checksum")
+          if (( $(stat -c %s "$iso") >= 2147483648 )); then
+            # GitHub limits each release asset to less than 2 GiB.
+            split -b 1900M -d -a 2 -- "$iso" "${iso}.part-"
+            assets=("${iso}.part-"* "$checksum")
+            printf '\nThe ISO exceeds the GitHub per-file limit. Download all `.part-*` files and join them before verifying:\n\n```bash\ncat %s.part-* > %s\nsha256sum -c %s-CHECKSUM\n```\n' \
+              "$ISO_NAME" "$ISO_NAME" "$ISO_NAME" >> "$notes"
+          fi
+
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Vimmite V6 ISO ${RELEASE_TIMESTAMP} UTC" \
+            --notes-file "$notes" \
+            --latest
