@@ -36,7 +36,7 @@ install:
     - mediainfo
     - mixxx
     - flac
-    - kimageformats
+    - kf6-kimageformats
 
     # Container tooling; Distrobox and Podman are already supplied by the base
     - podman-compose
