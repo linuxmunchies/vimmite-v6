@@ -22,6 +22,11 @@ vimmite-support-bundle output="":
 vimmite-dev *args:
     /usr/libexec/vimmite-devbox "$@"
 
+[doc('Discover and manage local application servers with VimServerScan')]
+[group('Development')]
+scan-servers *args:
+    /usr/libexec/vimmite-server-scan "$@"
+
 [doc('Open the unified AI setup, install, and update menu')]
 [group('AI')]
 ai *args:

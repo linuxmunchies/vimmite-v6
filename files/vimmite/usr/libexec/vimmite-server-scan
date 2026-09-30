@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly repo="linuxmunchies/VimServerScan"
+readonly box_name="vimmite-dev"
+readonly data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+readonly source_dir="${VIMMITE_SERVER_SCAN_SOURCE:-${data_home}/vimmite/src/VimServerScan}"
+readonly user_bin="${HOME}/.local/bin/server-scan"
+
+die() {
+    echo "error: $*" >&2
+    exit 1
+}
+
+tty_available() {
+    [[ -t 0 && -t 1 ]]
+}
+
+box_exists() {
+    command -v podman >/dev/null 2>&1 && podman container exists "${box_name}" >/dev/null 2>&1
+}
+
+in_box() {
+    distrobox enter --name "${box_name}" -- "$@"
+}
+
+ensure_devbox() {
+    command -v distrobox >/dev/null 2>&1 || die "distrobox is required but is not installed"
+    command -v podman >/dev/null 2>&1 || die "podman is required but is not installed"
+
+    if box_exists; then
+        return 0
+    fi
+
+    if ! tty_available; then
+        die "${box_name} is not present; run 'ujust vimmite-dev create' first"
+    fi
+
+    echo "VimServerScan is built in Vimmite's development box so Rust stays off the immutable host."
+    read -r -p "${box_name} is not present. Create it now? [Y/n] " answer
+    if [[ -n "${answer}" && ! "${answer}" =~ ^[Yy]$ ]]; then
+        die "installation cancelled"
+    fi
+
+    /usr/libexec/vimmite-devbox create
+    box_exists || die "${box_name} was not created successfully"
+}
+
+check_github_auth() {
+    if in_box gh auth status --hostname github.com >/dev/null 2>&1; then
+        return 0
+    fi
+
+    cat >&2 <<'EOF_AUTH'
+VimServerScan is a private GitHub repository and needs GitHub CLI authentication.
+Run:
+  ujust vimmite-dev enter gh auth login --hostname github.com
+Then retry:
+  ujust scan-servers install
+EOF_AUTH
+    return 1
+}
+
+sync_source() {
+    ensure_devbox
+    check_github_auth || return 1
+    mkdir -p "$(dirname "${source_dir}")"
+
+    if [[ -e "${source_dir}" && ! -d "${source_dir}/.git" ]]; then
+        die "${source_dir} exists but is not the managed VimServerScan checkout"
+    fi
+
+    if [[ ! -d "${source_dir}/.git" ]]; then
+        echo "Cloning ${repo} into ${source_dir} ..."
+        in_box gh repo clone "${repo}" "${source_dir}" -- --depth=1
+        return 0
+    fi
+
+    remote_url="$(in_box git -C "${source_dir}" remote get-url origin)"
+    case "${remote_url}" in
+        https://github.com/linuxmunchies/VimServerScan|https://github.com/linuxmunchies/VimServerScan.git|git@github.com:linuxmunchies/VimServerScan.git)
+            ;;
+        *)
+            die "${source_dir} points at an unexpected origin: ${remote_url}"
+            ;;
+    esac
+
+    if [[ -n "$(in_box git -C "${source_dir}" status --porcelain)" ]]; then
+        die "${source_dir} has local changes; clean or move that checkout before updating"
+    fi
+
+    echo "Updating ${repo} ..."
+    in_box git -C "${source_dir}" fetch --depth=1 origin main
+    in_box git -C "${source_dir}" checkout --detach FETCH_HEAD
+}
+
+build_install() {
+    sync_source
+    mkdir -p "$(dirname "${user_bin}")"
+
+    echo "Building VimServerScan in ${box_name} ..."
+    in_box bash -c '
+set -euo pipefail
+source_dir="$1"
+destination="$2"
+cd "${source_dir}"
+cargo build --release --locked
+install -Dm755 target/release/server-scan "${destination}"
+' _ "${source_dir}" "${user_bin}"
+
+    [[ -x "${user_bin}" ]] || die "build finished without installing ${user_bin}"
+    "${user_bin}" --version
+    echo "Installed ${user_bin}. Server scans run on the host, not inside ${box_name}."
+}
+
+show_status() {
+    printf 'Binary:      %s\n' "${user_bin}"
+    if [[ -x "${user_bin}" ]]; then
+        printf 'Version:     '
+        "${user_bin}" --version || true
+    else
+        echo "Version:     not installed"
+    fi
+    printf 'Source:      %s (%s)\n' "${source_dir}" "$([[ -d "${source_dir}/.git" ]] && echo present || echo absent)"
+    printf 'Build box:   %s (%s)\n' "${box_name}" "$(box_exists && echo present || echo absent)"
+    echo "Repository:  ${repo}"
+}
+
+uninstall_binary() {
+    if [[ -e "${user_bin}" ]]; then
+        rm -f -- "${user_bin}"
+        echo "Removed ${user_bin}. The managed source checkout was kept at ${source_dir}."
+    else
+        echo "Server Scan is already absent from ${user_bin}."
+    fi
+}
+
+usage() {
+    cat <<'EOF_USAGE'
+Usage: ujust scan-servers [Server Scan arguments]
+       ujust scan-servers install
+       ujust scan-servers update
+       ujust scan-servers status
+       ujust scan-servers uninstall
+
+Without a management action, arguments are passed directly to Server Scan:
+  ujust scan-servers
+  ujust scan-servers list --json
+  ujust scan-servers --diagnostics
+
+The private source repository is built inside vimmite-dev. The resulting binary
+is installed to ~/.local/bin and always runs on the host for host namespace
+visibility.
+EOF_USAGE
+}
+
+case "${1:-}" in
+    install|update)
+        build_install
+        ;;
+    status)
+        show_status
+        ;;
+    uninstall)
+        uninstall_binary
+        ;;
+    help)
+        usage
+        ;;
+    *)
+        binary=""
+        if command -v server-scan >/dev/null 2>&1; then
+            binary="$(command -v server-scan)"
+        elif [[ -x "${user_bin}" ]]; then
+            binary="${user_bin}"
+        fi
+
+        if [[ -z "${binary}" ]]; then
+            if ! tty_available; then
+                die "Server Scan is not installed; run 'ujust scan-servers install' first"
+            fi
+            read -r -p "Server Scan is not installed. Install it now? [Y/n] " answer
+            if [[ -n "${answer}" && ! "${answer}" =~ ^[Yy]$ ]]; then
+                die "installation cancelled"
+            fi
+            build_install
+            binary="${user_bin}"
+        fi
+
+        exec "${binary}" "$@"
+        ;;
+esac
