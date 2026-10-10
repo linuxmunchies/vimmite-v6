@@ -76,34 +76,34 @@ automatically.
 Direct commands are also available:
 
 ```bash
-ujust strix-halo-comfyui -- install stable
-ujust strix-halo-comfyui -- check both
-ujust strix-halo-comfyui -- update both
-ujust strix-halo-comfyui -- refresh stable
-ujust strix-halo-comfyui -- qwen21 both
-ujust strix-halo-comfyui -- launch stable
-ujust strix-halo-comfyui -- models stable
-ujust strix-halo-comfyui -- download-models
-ujust strix-halo-comfyui -- list-models
-ujust strix-halo-comfyui -- model-status qwen-image-21
-ujust strix-halo-comfyui -- model-status qwen-image-21-int8
-ujust strix-halo-comfyui -- download-model qwen-image-21-turbo
-ujust strix-halo-comfyui -- download-model qwen-image-21-turbo-uncensored
-ujust strix-halo-comfyui -- turbo-workflows both
-ujust strix-halo-comfyui -- download-model qwen-image
-ujust strix-halo-comfyui -- download-model-nas qwen-gguf
-ujust strix-halo-comfyui -- upload-model krea-turbo
-ujust strix-halo-comfyui -- upload-models
-ujust strix-halo-comfyui -- download-jobs
-ujust strix-halo-comfyui -- scan-nas
-ujust strix-halo-comfyui -- shell experimental
-ujust strix-halo-comfyui -- status both
-ujust strix-halo-comfyui -- diagnostics
+ujust strix-halo-comfyui install stable
+ujust strix-halo-comfyui check both
+ujust strix-halo-comfyui update both
+ujust strix-halo-comfyui refresh stable
+ujust strix-halo-comfyui qwen21 both
+ujust strix-halo-comfyui launch stable
+ujust strix-halo-comfyui models stable
+ujust strix-halo-comfyui download-models
+ujust strix-halo-comfyui list-models
+ujust strix-halo-comfyui model-status qwen-image-21
+ujust strix-halo-comfyui model-status qwen-image-21-int8
+ujust strix-halo-comfyui download-model qwen-image-21-turbo
+ujust strix-halo-comfyui download-model qwen-image-21-turbo-uncensored
+ujust strix-halo-comfyui turbo-workflows both
+ujust strix-halo-comfyui download-model qwen-image
+ujust strix-halo-comfyui download-model-nas qwen-gguf
+ujust strix-halo-comfyui upload-model krea-turbo
+ujust strix-halo-comfyui upload-models
+ujust strix-halo-comfyui download-jobs
+ujust strix-halo-comfyui scan-nas
+ujust strix-halo-comfyui shell experimental
+ujust strix-halo-comfyui status both
+ujust strix-halo-comfyui diagnostics
 ```
 
 ### Qwen Image 2.1 in both channels
 
-Run `ujust strix-halo-comfyui -- qwen21 both` once after installing both
+Run `ujust strix-halo-comfyui qwen21 both` once after installing both
 containers. This installs ComfyUI v0.37.0, the first official release with
 native Qwen Image 2.1 nodes, when the upstream toolbox image is older. The
 toolbox's ROCm PyTorch, torchvision, and torchaudio versions stay pinned during
@@ -210,7 +210,7 @@ uses the same comparison and then:
 6. restores enabled Qwen Image 2.1 support, checks PyTorch GPU visibility; and
 7. removes only dangling image layers from this ComfyUI image repository.
 
-`ujust strix-halo-comfyui -- refresh stable` intentionally recreates a
+`ujust strix-halo-comfyui refresh stable` intentionally recreates a
 container even when its image has not changed. It uses the same confirmation
 and rollback path.
 

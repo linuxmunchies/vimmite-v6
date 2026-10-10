@@ -511,7 +511,7 @@ Server: http://127.0.0.1:8080/v1 (unless --host/--port are supplied)
 Stop router: ujust strix-halo-ai -- stop [vulkan|rocm|both]
 Llama version: ujust strix-halo-ai -- version [vulkan|rocm|both]
 ComfyUI: ujust strix-halo-comfyui
-ComfyUI models: ujust strix-halo-comfyui -- download-models
+ComfyUI models: ujust strix-halo-comfyui download-models
 
 The containers share the host HOME, so toolbox update/removal never removes
 models. Rootless Podman receives host supplementary groups with

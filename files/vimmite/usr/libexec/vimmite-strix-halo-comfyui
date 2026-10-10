@@ -477,7 +477,7 @@ create_environment() {
     restore_qwen21_support "${environment}"
     ensure_comfyui_manager "${container}" 1
     sanity_check "${environment}"
-    log "$(environment_label "${environment}") ComfyUI is ready. Launch it from the menu or run: ujust strix-halo-comfyui -- launch ${environment}"
+    log "$(environment_label "${environment}") ComfyUI is ready. Launch it from the menu or run: ujust strix-halo-comfyui launch ${environment}"
 }
 
 confirm_container_reset() {
@@ -595,7 +595,7 @@ require_environment() {
     local environment="$1" container
     require_commands
     container="$(environment_container "${environment}")"
-    have_container "${container}" || die "${container} is not installed. Run: ujust strix-halo-comfyui -- install ${environment}"
+    have_container "${container}" || die "${container} is not installed. Run: ujust strix-halo-comfyui install ${environment}"
 }
 
 launch_environment() {
@@ -2066,27 +2066,27 @@ binds to ${COMFY_URL}. The upstream model_manager performs optional model downlo
 No models are downloaded during installation.
 
 Direct commands:
-  ujust strix-halo-comfyui -- install [stable|experimental|both]
-  ujust strix-halo-comfyui -- launch [stable|experimental]
-  ujust strix-halo-comfyui -- shell [stable|experimental]
-  ujust strix-halo-comfyui -- update [stable|experimental|both]
-  ujust strix-halo-comfyui -- check [stable|experimental|both]
-  ujust strix-halo-comfyui -- refresh [stable|experimental|both]
-  ujust strix-halo-comfyui -- turbo-workflows [stable|experimental|both]
-  ujust strix-halo-comfyui -- qwen21 [stable|experimental|both]
-  ujust strix-halo-comfyui -- models [stable|experimental]
-  ujust strix-halo-comfyui -- download-models
-  ujust strix-halo-comfyui -- list-models
-  ujust strix-halo-comfyui -- model-status [MODEL_ID|image|edit|segment|upscale|video]
-  ujust strix-halo-comfyui -- model-files MODEL_ID
-  ujust strix-halo-comfyui -- download-model MODEL_ID
-  ujust strix-halo-comfyui -- download-model-nas MODEL_ID
-  ujust strix-halo-comfyui -- upload-model MODEL_ID
-  ujust strix-halo-comfyui -- upload-models
-  ujust strix-halo-comfyui -- download-jobs
-  ujust strix-halo-comfyui -- status [stable|experimental|both]
-  ujust strix-halo-comfyui -- remove [stable|experimental|both]
-  ujust strix-halo-comfyui -- diagnostics
+  ujust strix-halo-comfyui install [stable|experimental|both]
+  ujust strix-halo-comfyui launch [stable|experimental]
+  ujust strix-halo-comfyui shell [stable|experimental]
+  ujust strix-halo-comfyui update [stable|experimental|both]
+  ujust strix-halo-comfyui check [stable|experimental|both]
+  ujust strix-halo-comfyui refresh [stable|experimental|both]
+  ujust strix-halo-comfyui turbo-workflows [stable|experimental|both]
+  ujust strix-halo-comfyui qwen21 [stable|experimental|both]
+  ujust strix-halo-comfyui models [stable|experimental]
+  ujust strix-halo-comfyui download-models
+  ujust strix-halo-comfyui list-models
+  ujust strix-halo-comfyui model-status [MODEL_ID|image|edit|segment|upscale|video]
+  ujust strix-halo-comfyui model-files MODEL_ID
+  ujust strix-halo-comfyui download-model MODEL_ID
+  ujust strix-halo-comfyui download-model-nas MODEL_ID
+  ujust strix-halo-comfyui upload-model MODEL_ID
+  ujust strix-halo-comfyui upload-models
+  ujust strix-halo-comfyui download-jobs
+  ujust strix-halo-comfyui status [stable|experimental|both]
+  ujust strix-halo-comfyui remove [stable|experimental|both]
+  ujust strix-halo-comfyui diagnostics
 
 Documentation: https://github.com/linuxmunchies/vimmite-v6/blob/main/docs/strix-halo-comfyui.md
 
