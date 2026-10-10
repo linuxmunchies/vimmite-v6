@@ -402,9 +402,9 @@ box_shell() { cat; }
         result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = [line for line in result.stdout.splitlines() if line]
-        self.assertEqual(len(entries), 36)
+        self.assertEqual(len(entries), 37)
         for model_id in (
-            'qwen-image-21', 'qwen-image-21-int8', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
+            'qwen-image-21', 'qwen-image-21-int8', 'qwen-image-21-turbo', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
             'glm-image', 'qwen-edit', 'sam', 'realesrgan', 'minimax', 'ltx-dev',
             'hunyuan-i2v', 'wan-i2v', 'wan-i2v-lightning',
         ):
@@ -418,6 +418,7 @@ box_shell() { cat; }
         result = self.run_functions('vimmite-strix-halo-comfyui', '''
 model_manifest qwen-image-21
 model_manifest qwen-image-21-int8
+model_manifest qwen-image-21-turbo
 model_manifest krea-turbo
 model_manifest qwen-gguf
 model_manifest glm-image
@@ -426,6 +427,13 @@ model_manifest wan-t2v-lightning
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Comfy-Org/Qwen-Image-2.1|diffusion_models/qwen_image_2.1_bf16.safetensors|diffusion_models/qwen_image_2.1_bf16.safetensors', result.stdout)
         self.assertIn('Comfy-Org/Qwen-Image-2.1|text_encoders/qwen3vl_8b_int8_convrot.safetensors|text_encoders/qwen3vl_8b_int8_convrot.safetensors', result.stdout)
+        turbo = self.run_functions('vimmite-strix-halo-comfyui', 'model_manifest qwen-image-21-turbo')
+        self.assertEqual(turbo.returncode, 0, turbo.stderr)
+        self.assertEqual(turbo.stdout.splitlines(), [
+            'Comfy-Org/Qwen-Image-2.1|diffusion_models/qwen_image_2.1_turbo_bf16.safetensors|diffusion_models/qwen_image_2.1_turbo_bf16.safetensors',
+            'Comfy-Org/Qwen-Image-2.1|text_encoders/qwen3vl_8b_bf16.safetensors|text_encoders/qwen3vl_8b_bf16.safetensors',
+            'Comfy-Org/Qwen-Image-2.1|vae/qwen_image_2.1_vae_bf16.safetensors|vae/qwen_image_2.1_vae_bf16.safetensors',
+        ])
         self.assertIn('Comfy-Org/Krea-2|diffusion_models/krea2_turbo_bf16.safetensors|diffusion_models/krea2_turbo_bf16.safetensors', result.stdout)
         self.assertIn('unsloth/Qwen2.5-VL-7B-Instruct-GGUF|Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf|text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf', result.stdout)
         self.assertIn('zai-org/GLM-Image|*|diffusers/GLM-Image', result.stdout)

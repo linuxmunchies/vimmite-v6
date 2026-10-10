@@ -604,6 +604,7 @@ model_catalog() {
     cat <<'EOF'
 qwen-image-21|image|Qwen Image 2.1 7B BF16 (~14.2 GB + dependencies)
 qwen-image-21-int8|image|Qwen Image 2.1 INT8 (official template, ~7.3 GB + dependencies)
+qwen-image-21-turbo|image|Qwen Image 2.1 Turbo BF16 (8-step, ~14.2 GB + dependencies)
 krea-turbo|image|Krea 2 Turbo BF16 (~26.3 GB + dependencies)
 qwen-image|image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
 qwen-lightning|image|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
@@ -701,8 +702,11 @@ qwen_dependencies() {
 model_manifest() {
     local id="$1" repo file mode variant
     case "${id}" in
-        qwen-image-21)
-            model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_bf16.safetensors
+        qwen-image-21|qwen-image-21-turbo)
+            # Comfy-Org repackages Qwen/Qwen-Image-2.1-Turbo for native loaders.
+            file=qwen_image_2.1_bf16.safetensors
+            [[ "${id}" != qwen-image-21-turbo ]] || file=qwen_image_2.1_turbo_bf16.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 "diffusion_models/${file}"
             model_file Comfy-Org/Qwen-Image-2.1 text_encoders/qwen3vl_8b_bf16.safetensors
             model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
         qwen-image-21-int8)

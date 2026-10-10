@@ -60,7 +60,7 @@ downloads. Escape or Back leaves the menu; those jobs keep running. Each choice
 starts with two columns, `disk=` (this PC) and `NAS=` (foxraid), each `yes`,
 `2/3`, `no`, or `?` until you scan. The first visit offers a NAS scan; you
 can run **Scan NAS** again later. Image generation lists **Qwen Image 2.1**
-in BF16 and INT8, followed by **Krea 2 Turbo**. Hugging Face, NAS, and upload jobs run in the
+in BF16 and INT8, plus **Qwen Image 2.1 Turbo BF16**, followed by **Krea 2 Turbo**. Hugging Face, NAS, and upload jobs run in the
 background so you can queue another model without waiting; **Downloads** shows
 logs and can stop a job. **Full status list** prints the complete table. NAS
 transfers use
@@ -87,6 +87,7 @@ ujust strix-halo-comfyui -- download-models
 ujust strix-halo-comfyui -- list-models
 ujust strix-halo-comfyui -- model-status qwen-image-21
 ujust strix-halo-comfyui -- model-status qwen-image-21-int8
+ujust strix-halo-comfyui -- download-model qwen-image-21-turbo
 ujust strix-halo-comfyui -- download-model qwen-image
 ujust strix-halo-comfyui -- download-model-nas qwen-gguf
 ujust strix-halo-comfyui -- upload-model krea-turbo
@@ -116,6 +117,12 @@ Template Library workflows default to INT8; download
 `qwen-image-21-int8` to use those without changing their model selectors.
 Existing user workflows are never overwritten. Restart a running ComfyUI
 server after enabling Qwen support so it loads the new nodes.
+
+`qwen-image-21-turbo` downloads the full BF16 Turbo diffusion model and shares
+the BF16 text encoder and VAE with `qwen-image-21`. The weights are the
+[Comfy-Org packaging](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)
+of `Qwen/Qwen-Image-2.1-Turbo`. In a Qwen Image 2.1 workflow, select
+`qwen_image_2.1_turbo_bf16.safetensors` and use 8 sampling steps.
 
 ## Persistent data
 
