@@ -1,5 +1,6 @@
 """Run with python3 -m unittest discover -s tests -v. No network or containers needed."""
 import os
+import json
 from pathlib import Path
 import pty
 import re
@@ -402,9 +403,9 @@ box_shell() { cat; }
         result = self.run_functions('vimmite-strix-halo-comfyui', 'model_catalog')
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = [line for line in result.stdout.splitlines() if line]
-        self.assertEqual(len(entries), 37)
+        self.assertEqual(len(entries), 38)
         for model_id in (
-            'qwen-image-21', 'qwen-image-21-int8', 'qwen-image-21-turbo', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
+            'qwen-image-21', 'qwen-image-21-int8', 'qwen-image-21-turbo', 'qwen-image-21-turbo-uncensored', 'qwen-image', 'qwen-gguf', 'krea-turbo', 'ideogram',
             'glm-image', 'qwen-edit', 'sam', 'realesrgan', 'minimax', 'ltx-dev',
             'hunyuan-i2v', 'wan-i2v', 'wan-i2v-lightning',
         ):
@@ -438,6 +439,61 @@ model_manifest wan-t2v-lightning
         self.assertIn('unsloth/Qwen2.5-VL-7B-Instruct-GGUF|Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf|text_encoders/Qwen2.5-VL-7B-Instruct-UD-Q4_K_XL.gguf', result.stdout)
         self.assertIn('zai-org/GLM-Image|*|diffusers/GLM-Image', result.stdout)
         self.assertIn('lightx2v/Wan2.2-Lightning|Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors|loras/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors', result.stdout)
+
+    def test_comfy_uncensored_bundle_uses_encoder_directory_and_shared_turbo(self):
+        result = self.run_functions('vimmite-strix-halo-comfyui',
+                                    'model_manifest qwen-image-21-turbo-uncensored')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            'Comfy-Org/Qwen-Image-2.1|diffusion_models/qwen_image_2.1_turbo_bf16.safetensors|diffusion_models/qwen_image_2.1_turbo_bf16.safetensors',
+            'AtomicChat/Qwen-Image-2.1-Turbo-Uncensored-GGUF|Qwen-Image-2.1-Turbo-Abliterated-Uncensored-Q8_0.gguf|text_encoders/Qwen-Image-2.1-Turbo-Abliterated-Uncensored-Q8_0.gguf',
+            'Comfy-Org/Qwen-Image-2.1|vae/qwen_image_2.1_vae_bf16.safetensors|vae/qwen_image_2.1_vae_bf16.safetensors',
+        ])
+
+    def test_comfy_turbo_workflows_seed_both_and_preserve_user_edits(self):
+        command = [str(LIB / 'vimmite-strix-halo-comfyui'), 'turbo-workflows', 'both']
+        env = {**os.environ, 'HOME': str(self.home)}
+        first = subprocess.run(command, env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        for channel in ('stable', 'experimental'):
+            workflows = self.home / 'ai/comfy-user' / channel / 'default/workflows'
+            for name in ('qwen-image-2.1-turbo-bf16.json', 'qwen-image-2.1-turbo-uncensored-q8.json'):
+                self.assertTrue((workflows / name).is_file())
+        edited = self.home / 'ai/comfy-user/stable/default/workflows/qwen-image-2.1-turbo-bf16.json'
+        edited.write_text('user edits')
+        again = subprocess.run(command, env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(edited.read_text(), 'user edits')
+
+    def test_comfy_turbo_workflow_graphs_have_consistent_links_and_schedule(self):
+        resources = ROOT / 'files/vimmite/usr/share/vimmite/comfyui/workflows'
+        for path in resources.glob('*.json'):
+            with self.subTest(workflow=path.name):
+                workflow = json.loads(path.read_text())
+                nodes = {n['id']: n for n in workflow['nodes']}
+                links = {link[0]: link for link in workflow['links']}
+                for lid, source, slot, target, input_slot, kind in links.values():
+                    self.assertIn(lid, nodes[source]['outputs'][slot]['links'])
+                    self.assertEqual(nodes[target]['inputs'][input_slot]['link'], lid)
+                    self.assertEqual(nodes[source]['outputs'][slot]['type'], kind)
+                    self.assertEqual(nodes[target]['inputs'][input_slot]['type'], kind)
+                for node in nodes.values():
+                    for inp in node['inputs']:
+                        if inp['link'] is not None:
+                            self.assertIn(inp['link'], links)
+                by_type = {n['type']: n for n in nodes.values()}
+                sigmas = [float(s) for s in by_type['ManualSigmas']['widgets_values'][0].split(',')]
+                self.assertEqual(sigmas, [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0])
+                self.assertIn('BasicGuider', by_type)
+                self.assertEqual(by_type['KSamplerSelect']['widgets_values'], ['euler'])
+                self.assertEqual(by_type['UNETLoader']['widgets_values'][0], 'qwen_image_2.1_turbo_bf16.safetensors')
+                self.assertIn('TextEncodeQwenImage21', by_type)
+                self.assertNotIn('KSampler', by_type)
+                if 'uncensored' in path.name:
+                    self.assertEqual(by_type['CLIPLoaderGGUF']['widgets_values'],
+                                     ['Qwen-Image-2.1-Turbo-Abliterated-Uncensored-Q8_0.gguf', 'qwen_image'])
+                else:
+                    self.assertEqual(by_type['CLIPLoader']['widgets_values'][0], 'qwen3vl_8b_bf16.safetensors')
 
     def test_comfy_model_download_uses_new_root_and_xet_hf(self):
         result = self.run_functions('vimmite-strix-halo-comfyui', '''

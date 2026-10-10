@@ -88,6 +88,8 @@ ujust strix-halo-comfyui -- list-models
 ujust strix-halo-comfyui -- model-status qwen-image-21
 ujust strix-halo-comfyui -- model-status qwen-image-21-int8
 ujust strix-halo-comfyui -- download-model qwen-image-21-turbo
+ujust strix-halo-comfyui -- download-model qwen-image-21-turbo-uncensored
+ujust strix-halo-comfyui -- turbo-workflows both
 ujust strix-halo-comfyui -- download-model qwen-image
 ujust strix-halo-comfyui -- download-model-nas qwen-gguf
 ujust strix-halo-comfyui -- upload-model krea-turbo
@@ -122,7 +124,32 @@ server after enabling Qwen support so it loads the new nodes.
 the BF16 text encoder and VAE with `qwen-image-21`. The weights are the
 [Comfy-Org packaging](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)
 of `Qwen/Qwen-Image-2.1-Turbo`. In a Qwen Image 2.1 workflow, select
-`qwen_image_2.1_turbo_bf16.safetensors` and use 8 sampling steps.
+`qwen_image_2.1_turbo_bf16.safetensors` and use the published 8-step sigma
+schedule with Euler and CFG 1, as in the bundled Turbo workflows.
+
+`qwen-image-21-turbo-uncensored` pairs the same Turbo BF16 diffusion model and
+VAE with the Q8_0 text encoder from
+[AtomicChat/Qwen-Image-2.1-Turbo-Uncensored-GGUF](https://huggingface.co/AtomicChat/Qwen-Image-2.1-Turbo-Uncensored-GGUF).
+That repository alters the Qwen3-VL text encoder, not the diffusion model.
+The encoder is stored under `text_encoders`, not `unet`. Existing Turbo
+weights are reused, so this bundle adds about 8.7 GB when Turbo is installed.
+
+Downloading either Turbo bundle (Hugging Face or NAS) automatically inserts
+these workflows into both channels' persistent **Workflows** folders:
+
+- `qwen-image-2.1-turbo-bf16.json`
+- `qwen-image-2.1-turbo-uncensored-q8.json`
+
+Choose **Install Qwen Image 2.1 Turbo workflows** in the manager to install
+them separately, or use `turbo-workflows both`. This copies bundled templates
+without network access or model downloads and preserves existing files. The
+templates adapt the official Qwen 2.1 text-to-image graph to Euler, CFG 1, and
+`ManualSigmas` with the published eight-step schedule; they do not require
+prompt-enhancer weights. The uncensored template additionally requires
+`CLIPLoaderGGUF` from ComfyUI-GGUF with Qwen3-VL/Qwen Image 2.1 detection
+support. It is for text-to-image only and does not load a vision projector.
+The publisher has not verified this encoder in ComfyUI. Restart a running
+server after model downloads so its model selectors refresh.
 
 ## Persistent data
 

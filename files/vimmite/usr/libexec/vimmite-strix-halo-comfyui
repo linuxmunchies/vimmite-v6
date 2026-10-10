@@ -365,6 +365,31 @@ for original, target in names.items():
 PY
 }
 
+seed_qwen21_turbo_workflows_environment() {
+    local environment="$1" source_dir destination workflow
+    # The same resource layout works in the image and from the source checkout.
+    source_dir="${SCRIPT_DIR}/../share/vimmite/comfyui/workflows"
+    destination="$(environment_user_dir "${environment}")/default/workflows"
+    [[ -d "${source_dir}" ]] || { warn "Turbo workflow resources are missing: ${source_dir}"; return 1; }
+    mkdir -p -- "${destination}" || return 1
+    for workflow in qwen-image-2.1-turbo-bf16.json qwen-image-2.1-turbo-uncensored-q8.json; do
+        if [[ -e "${destination}/${workflow}" ]]; then
+            log "Keeping existing workflow: ${destination}/${workflow}"
+        else
+            cp -n -- "${source_dir}/${workflow}" "${destination}/${workflow}" || return 1
+            log "Added Turbo workflow: ${destination}/${workflow}"
+        fi
+    done
+    log 'Turbo templates use 8 Euler steps and CFG 1. The uncensored template requires ComfyUI-GGUF (CLIPLoaderGGUF); it is text-to-image only.'
+}
+
+seed_model_workflows() {
+    case "$1" in
+        qwen-image-21-turbo|qwen-image-21-turbo-uncensored)
+            run_for_target seed_qwen21_turbo_workflows both ;;
+    esac
+}
+
 restore_qwen21_support() {
     local environment="$1"
     [[ -f "$(qwen21_marker "${environment}")" ]] || return 0
@@ -605,6 +630,7 @@ model_catalog() {
 qwen-image-21|image|Qwen Image 2.1 7B BF16 (~14.2 GB + dependencies)
 qwen-image-21-int8|image|Qwen Image 2.1 INT8 (official template, ~7.3 GB + dependencies)
 qwen-image-21-turbo|image|Qwen Image 2.1 Turbo BF16 (8-step, ~14.2 GB + dependencies)
+qwen-image-21-turbo-uncensored|image|Qwen Image 2.1 Turbo Uncensored Q8_0 encoder (~8.7 GB + Turbo BF16/VAE)
 krea-turbo|image|Krea 2 Turbo BF16 (~26.3 GB + dependencies)
 qwen-image|image|Qwen Image 2512 BF16 (~40.9 GB + dependencies)
 qwen-lightning|image|Qwen Image 2512 Lightning 4-step LoRA (~850 MB)
@@ -712,6 +738,12 @@ model_manifest() {
         qwen-image-21-int8)
             model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_int8_convrot.safetensors
             model_file Comfy-Org/Qwen-Image-2.1 text_encoders/qwen3vl_8b_int8_convrot.safetensors
+            model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
+        qwen-image-21-turbo-uncensored)
+            # AtomicChat's "Uncensored" repository changes the text encoder,
+            # not the denoiser. Reuse the full Turbo BF16 diffusion model.
+            model_file Comfy-Org/Qwen-Image-2.1 diffusion_models/qwen_image_2.1_turbo_bf16.safetensors
+            model_file AtomicChat/Qwen-Image-2.1-Turbo-Uncensored-GGUF Qwen-Image-2.1-Turbo-Abliterated-Uncensored-Q8_0.gguf text_encoders/Qwen-Image-2.1-Turbo-Abliterated-Uncensored-Q8_0.gguf
             model_file Comfy-Org/Qwen-Image-2.1 vae/qwen_image_2.1_vae_bf16.safetensors ;;
         qwen-image|qwen-edit)
             if [[ "${id}" == qwen-image ]]; then
@@ -949,6 +981,7 @@ download_model() {
         log "PROGRESS done ${n}/${total_files} ${relative} ${expect}"
     done <<<"${manifest}"
     log "Download complete: $1"
+    seed_model_workflows "$1"
 }
 
 rclone_smb() {
@@ -1018,6 +1051,7 @@ download_model_nas() {
         fi
     done <<<"${manifest}"
     log "NAS download complete: $1"
+    seed_model_workflows "$1"
 }
 
 model_item_present() {
@@ -2038,6 +2072,7 @@ Direct commands:
   ujust strix-halo-comfyui -- update [stable|experimental|both]
   ujust strix-halo-comfyui -- check [stable|experimental|both]
   ujust strix-halo-comfyui -- refresh [stable|experimental|both]
+  ujust strix-halo-comfyui -- turbo-workflows [stable|experimental|both]
   ujust strix-halo-comfyui -- qwen21 [stable|experimental|both]
   ujust strix-halo-comfyui -- models [stable|experimental]
   ujust strix-halo-comfyui -- download-models
@@ -2109,6 +2144,7 @@ environment_menu() {
             "Update if newer" \
             "Recreate container" \
             "Enable Qwen Image 2.1" \
+            "Install Qwen Image 2.1 Turbo workflows" \
             "Open Model Manager" \
             "Show diagnostics" \
             "Remove container" \
@@ -2121,6 +2157,7 @@ environment_menu() {
             "Update if newer") update_environment "${environment}" ;;
             "Recreate container") refresh_environment "${environment}" ;;
             "Enable Qwen Image 2.1") enable_qwen21_environment "${environment}" ;;
+            "Install Qwen Image 2.1 Turbo workflows") seed_qwen21_turbo_workflows_environment "${environment}" ;;
             "Open Model Manager") model_manager "${environment}" ;;
             "Show diagnostics") diagnose_environment "${environment}" ;;
             "Remove container") remove_environment "${environment}" ;;
@@ -2138,6 +2175,7 @@ menu() {
             "Stable (recommended)" \
             "Experimental (upstream dev)" \
             "Manage models (download / upload / status)" \
+            "Install Qwen Image 2.1 Turbo workflows (both channels)" \
             "Shared data locations" \
             "Diagnostics" \
             "Help" \
@@ -2146,6 +2184,7 @@ menu() {
             "Stable"*) environment_menu stable ;;
             "Experimental"*) environment_menu experimental ;;
             "Manage models"*) download_model_menu ;;
+            "Install Qwen Image 2.1 Turbo workflows"*) run_for_target seed_qwen21_turbo_workflows both; pause_menu ;;
             "Shared data locations")
                 log "Models: ${MODEL_DIR}"
                 log "Inputs: ${INPUT_DIR}"
@@ -2174,7 +2213,7 @@ run_for_target() {
 
 usage() {
     cat <<'EOF'
-Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|check|update|refresh|qwen21|models|status|remove|diagnostics|help] [stable|experimental|both]
+Usage: vimmite-strix-halo-comfyui [menu|install|launch|shell|check|update|refresh|qwen21|turbo-workflows|models|status|remove|diagnostics|help] [stable|experimental|both]
        vimmite-strix-halo-comfyui [download-models|list-models|upload-models|download-jobs|scan-nas]
        vimmite-strix-halo-comfyui model-status [MODEL_ID|image|edit|segment|upscale|video]
        vimmite-strix-halo-comfyui [model-files|download-model|download-model-nas|upload-model] MODEL_ID
@@ -2252,10 +2291,11 @@ PY
                 upload-model) upload_model "$2" ;;
             esac
             ;;
-        install|check|update|refresh|qwen21|remove)
+        install|check|update|refresh|qwen21|turbo-workflows|remove)
             [[ "${target}" =~ ^(stable|experimental|both)$ ]] || { usage >&2; exit 2; }
             if [[ "${action}" == install ]]; then action=create; fi
             if [[ "${action}" == qwen21 ]]; then action=enable_qwen21; fi
+            if [[ "${action}" == turbo-workflows ]]; then action=seed_qwen21_turbo_workflows; fi
             run_for_target "${action}" "${target}"
             ;;
         launch|shell|models)
