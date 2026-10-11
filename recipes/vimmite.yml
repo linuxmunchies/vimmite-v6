@@ -10,6 +10,11 @@ image-version: 44
 modules:
   - from-file: modules/hardware.yml
   - from-file: modules/packages.yml
+  # Use Universal Blue's prebuilt module; the RPM Fusion akmod package tries
+  # to compile during installation and fails inside the image build container.
+  - type: akmods
+    install:
+      - v4l2loopback
   - from-file: modules/ivpn.yml
   - from-file: modules/gaming.yml
   - from-file: modules/virtualization.yml
