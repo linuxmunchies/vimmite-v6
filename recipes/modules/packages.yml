@@ -2,6 +2,10 @@
 # yaml-language-server: $schema=https://schema.blue-build.org/module-v1.json
 
 type: dnf
+repos:
+  # akmod-v4l2loopback is provided by RPM Fusion.
+  nonfree: rpmfusion
+  cleanup: true
 install:
   packages:
     # Shell, editors, and command-line utilities
@@ -31,6 +35,7 @@ install:
     - fuse-libs
 
     # Media tools
+    - akmod-v4l2loopback
     - vlc
     - mpv
     - mediainfo
