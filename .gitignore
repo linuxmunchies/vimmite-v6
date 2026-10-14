@@ -6,3 +6,7 @@ cosign.private
 /.bluebuild-scripts_*
 /iso/
 /.bluebuild-iso-work/
+
+# Disposable state for the bundled project launcher.
+/.devchecker-launcher-backups/
+/.run/launcher/

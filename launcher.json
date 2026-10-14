@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "name": "vimmite-v6",
+  "adapter": "foreground",
+  "default_action": "menu",
+  "argument_mode": "strict",
+  "actions": {
+    "iso-help": {
+      "argv": [
+        "bash",
+        "{root}/scripts/build-iso.sh",
+        "--help"
+      ],
+      "cwd": "project",
+      "forward_args": false,
+      "description": "Show ISO modes and options without building.",
+      "required_files": [
+        "scripts/build-iso.sh"
+      ]
+    },
+    "check": {
+      "argv": [
+        "{python}",
+        "{root}/scripts/check.py"
+      ],
+      "cwd": "project",
+      "forward_args": true,
+      "description": "Run the existing source checks; optional argument selects one check.",
+      "required_files": [
+        "scripts/check.py"
+      ]
+    },
+    "build": {
+      "argv": [
+        "bash",
+        "{root}/scripts/build-iso.sh"
+      ],
+      "cwd": "project",
+      "forward_args": true,
+      "description": "Explicit ISO build; pass published/local and output/cache options.",
+      "required_files": [
+        "scripts/build-iso.sh"
+      ]
+    }
+  },
+  "requirements": [
+    "bash"
+  ],
+  "preparation": "ISO builds require Podman, Skopeo, disk space and interactive sudo for rootful Lorax; local mode also needs BlueBuild. Existing build options/output/cache paths are retained and builds may overwrite their selected ISO. Source check prerequisites are listed in CONTRIBUTING.md. No build, registry access or privilege elevation occurs on default invocation.",
+  "scope": "checkout"
+}

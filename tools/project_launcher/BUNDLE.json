@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "engine_version": "0.3.0",
+  "files": {
+    "run.sh": {
+      "sha256": "528f1d56729726ad7bf87162a35c4fb4f0b2d19024aff5d98bee2ead3724b4f9",
+      "mode": 493
+    },
+    "tools/project_launcher/VERSION": {
+      "sha256": "d915cc95d6ca8f47ae297713ed46d4e5c5d99ddd29fc3c61e263bdf305f2b5b0",
+      "mode": 420
+    },
+    "tools/project_launcher/__init__.py": {
+      "sha256": "4e9bd7a34d05802bda77a4e03eea64d99e64f2d4cb26bb08f6d434ca39aadf4e",
+      "mode": 420
+    },
+    "tools/project_launcher/__main__.py": {
+      "sha256": "a067fc29f4b26887855c0fc544f6c17c7871f2af0e51f82d258310e1bbdabf69",
+      "mode": 420
+    },
+    "tools/project_launcher/bundle.py": {
+      "sha256": "87a3dfc83c81922d67858e839e4461aedbde68c24b07b11d3cae167fc53882ae",
+      "mode": 420
+    },
+    "tools/project_launcher/cli.py": {
+      "sha256": "251ef83a725539bb61aa6c972f737018edc41c4ecc71b752773d26b7939f0748",
+      "mode": 420
+    },
+    "tools/project_launcher/config.py": {
+      "sha256": "e41b976e146e33db5f653e2c01a83dbbe6f07e2ca1d786523a95cb5044da9e9b",
+      "mode": 420
+    },
+    "tools/project_launcher/menu.py": {
+      "sha256": "3700365b7514aa528e4722e078b98fbf1ae3cc8384c95487cdbac08ea7e64c07",
+      "mode": 420
+    },
+    "tools/project_launcher/server.py": {
+      "sha256": "bd188267e25439001575e0bdd33b8029ce14b1a4c2cb599e8ed42ddd4cb6b6d3",
+      "mode": 420
+    },
+    "tools/project_launcher/service.py": {
+      "sha256": "74eb303a93b2f1e7d1f3e4fb96cfc77b5d97291fab493e086602b3bbacb2a45a",
+      "mode": 420
+    },
+    "tools/project_launcher/wrapper.sh": {
+      "sha256": "528f1d56729726ad7bf87162a35c4fb4f0b2d19024aff5d98bee2ead3724b4f9",
+      "mode": 420
+    }
+  }
+}
