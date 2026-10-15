@@ -16,6 +16,8 @@ readonly DESKTOP_FILE="${HOME}/.local/share/applications/mixxx26.desktop"
 # first start, which would break the Mixxx 2.5 profile in ~/.mixxx, so it must
 # never share that directory. Do not change this path to ~/.mixxx.
 readonly SETTINGS_DIR="${HOME}/.mixxx-stems"
+# Optional: VimDJTable (Inpulse 500 mapping builder, with the VimMixxxStems stem page).
+readonly VIMDJTABLE_DIR="${VIMDJTABLE_DIR:-${HOME}/dev/VimDJTable}"
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -23,11 +25,14 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
     cat <<EOF
-Usage: ujust install-mixxx-beta [--uninstall]
+Usage: ujust install-mixxx-beta [--mapping-only | --uninstall]
 
 Builds Mixxx 2.6 (beta) from the '${MIXXX_BRANCH}' branch in the '${TOOLBOX_NAME}' toolbox.
 Expect roughly 10-20 minutes of build time on first install.
 Mixxx 2.5 from the image stays installed alongside it.
+If a VimDJTable checkout exists (\$VIMDJTABLE_DIR, default ~/dev/VimDJTable), its Inpulse 500
+mapping (your saved Studio settings, stems on pad mode 8) is installed and made active.
+--mapping-only redoes just that step.
 EOF
 }
 
@@ -117,6 +122,25 @@ EOF
     log "Desktop entry written: ${DESKTOP_FILE}"
 }
 
+setup_mapping() {
+    local cli="${VIMDJTABLE_DIR}/app/bin/install-mixxx-mapping"
+    if [[ ! -x "${cli}" ]]; then
+        log "VimDJTable not found at ${VIMDJTABLE_DIR}; skipping the controller mapping."
+        log "  (set VIMDJTABLE_DIR and run: ujust install-mixxx-beta --mapping-only)"
+        return 0
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        warn "node is not installed; skipping the VimDJTable mapping."
+        return 0
+    fi
+    if pgrep -x mixxx >/dev/null 2>&1; then
+        warn "Mixxx is running; close it and run: ujust install-mixxx-beta --mapping-only"
+        return 0
+    fi
+    log "Installing the VimDJTable Inpulse 500 mapping into ${SETTINGS_DIR}..."
+    node "${cli}" --target beta --activate || warn "VimDJTable mapping setup failed; Mixxx 2.6 itself is installed."
+}
+
 install_mixxx() {
     ensure_toolbox
     install_build_deps
@@ -124,6 +148,7 @@ install_mixxx() {
     build_and_install
     write_launcher
     write_desktop_entry
+    setup_mapping
 
     log ""
     log "Mixxx 2.6 (beta) is installed."
@@ -163,6 +188,7 @@ uninstall_mixxx() {
 
 case "${1:-install}" in
     install) install_mixxx ;;
+    --mapping-only) setup_mapping ;;
     --uninstall|uninstall) uninstall_mixxx ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
