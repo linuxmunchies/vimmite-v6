@@ -292,3 +292,8 @@ ramalama-run-north *prompt:
 [group('AI tools')]
 install-ai-cli tool="menu" target="host":
     /usr/libexec/vimmite-install-ai-cli "$@"
+
+[doc('Build and install Mixxx 2.6 (beta, stems) in a toolbox; --uninstall removes it')]
+[group('Audio')]
+install-mixxx-beta *args:
+    /usr/libexec/vimmite-install-mixxx-beta "$@"

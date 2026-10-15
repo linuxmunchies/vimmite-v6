@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# Builds Mixxx 2.6 (beta, stem support) from source inside a Fedora toolbox and
+# installs it per user. Mixxx 2.5 from the image stays installed and untouched.
+set -euo pipefail
+
+readonly TOOLBOX_NAME="mixxx26"
+readonly TOOLBOX_IMAGE="registry.fedoraproject.org/fedora-toolbox:44"
+readonly MIXXX_REPO="https://github.com/mixxxdj/mixxx.git"
+readonly MIXXX_BRANCH="2.6"
+readonly SRC_DIR="${HOME}/.local/src/mixxx-2.6"
+readonly BUILD_DIR="${SRC_DIR}/build"
+readonly INSTALL_PREFIX="${HOME}/.local/opt/mixxx26"
+readonly LAUNCHER="${HOME}/.local/bin/mixxx26"
+readonly DESKTOP_FILE="${HOME}/.local/share/applications/mixxx26.desktop"
+# Mixxx 2.6 runs its own settings directory. It migrates the database schema on
+# first start, which would break the Mixxx 2.5 profile in ~/.mixxx, so it must
+# never share that directory. Do not change this path to ~/.mixxx.
+readonly SETTINGS_DIR="${HOME}/.mixxx-stems"
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    cat <<EOF
+Usage: ujust install-mixxx-beta [--uninstall]
+
+Builds Mixxx 2.6 (beta) from the '${MIXXX_BRANCH}' branch in the '${TOOLBOX_NAME}' toolbox.
+Expect roughly 10-20 minutes of build time on first install.
+Mixxx 2.5 from the image stays installed alongside it.
+EOF
+}
+
+if (( EUID == 0 )); then
+    die "Run this as your regular desktop user, not root."
+fi
+
+toolbox_exists() {
+    podman container exists "${TOOLBOX_NAME}" >/dev/null 2>&1
+}
+
+toolbox_run() {
+    toolbox run -c "${TOOLBOX_NAME}" "$@"
+}
+
+ensure_toolbox() {
+    if toolbox_exists; then
+        log "Toolbox '${TOOLBOX_NAME}' already exists; reusing it."
+    else
+        log "Creating toolbox '${TOOLBOX_NAME}' from ${TOOLBOX_IMAGE}..."
+        toolbox create -y -i "${TOOLBOX_IMAGE}" "${TOOLBOX_NAME}"
+    fi
+}
+
+install_build_deps() {
+    log "Installing Mixxx build dependencies inside the toolbox..."
+    toolbox_run sudo dnf -y builddep mixxx
+    toolbox_run sudo dnf -y install git ninja-build cmake
+}
+
+fetch_source() {
+    mkdir -p "$(dirname "${SRC_DIR}")"
+    if [[ -d "${SRC_DIR}/.git" ]]; then
+        log "Updating Mixxx ${MIXXX_BRANCH} source in ${SRC_DIR}..."
+        git -C "${SRC_DIR}" pull --ff-only
+    else
+        log "Cloning Mixxx ${MIXXX_BRANCH} source into ${SRC_DIR}..."
+        git clone --depth 1 -b "${MIXXX_BRANCH}" "${MIXXX_REPO}" "${SRC_DIR}"
+    fi
+}
+
+build_and_install() {
+    log "Configuring Mixxx 2.6 (stems on, native optimisation, battery off)..."
+    toolbox_run cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DSTEM=ON \
+        -DOPTIMIZE=native \
+        -DBATTERY=OFF \
+        -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}"
+    log "Building Mixxx 2.6. This takes a while."
+    # Arguments are passed through to sh so the paths are not re-parsed by the shell inside the toolbox.
+    # shellcheck disable=SC2016
+    toolbox_run sh -c 'cmake --build "$1" -j"$(nproc)" && cmake --install "$1"' _ "${BUILD_DIR}"
+}
+
+write_launcher() {
+    mkdir -p "$(dirname "${LAUNCHER}")" "${SETTINGS_DIR}"
+    # Quoted delimiter: $HOME and "$@" are expanded when the launcher runs, not now.
+    cat > "${LAUNCHER}" <<'EOF'
+#!/usr/bin/env bash
+# Launches Mixxx 2.6 (beta) from the 'mixxx26' toolbox.
+# Uses ~/.mixxx-stems/ rather than ~/.mixxx: 2.6 migrates the database schema,
+# which would break the Mixxx 2.5 profile. Do not remove --settings-path.
+set -euo pipefail
+exec toolbox run -c mixxx26 "$HOME/.local/opt/mixxx26/bin/mixxx" --settings-path "$HOME/.mixxx-stems/" "$@"
+EOF
+    chmod +x "${LAUNCHER}"
+    log "Launcher written: ${LAUNCHER}"
+}
+
+write_desktop_entry() {
+    mkdir -p "$(dirname "${DESKTOP_FILE}")"
+    cat > "${DESKTOP_FILE}" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Mixxx 2.6 (beta)
+GenericName=DJ Software
+Comment=Mixxx 2.6 beta with DJ stem separation support
+Exec=${LAUNCHER} %U
+Icon=mixxx
+Terminal=false
+Categories=AudioVideo;Audio;
+EOF
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$(dirname "${DESKTOP_FILE}")" || warn "update-desktop-database failed; the menu entry may appear after re-login."
+    fi
+    log "Desktop entry written: ${DESKTOP_FILE}"
+}
+
+install_mixxx() {
+    ensure_toolbox
+    install_build_deps
+    fetch_source
+    build_and_install
+    write_launcher
+    write_desktop_entry
+
+    log ""
+    log "Mixxx 2.6 (beta) is installed."
+    log "  Installed to:  ${INSTALL_PREFIX} (inside the '${TOOLBOX_NAME}' toolbox)"
+    log "  Launch:        mixxx26   or the 'Mixxx 2.6 (beta)' menu entry"
+    log "  Settings:      ${SETTINGS_DIR} (separate from ~/.mixxx, which Mixxx 2.5 uses)"
+    log "  Remove:        ujust install-mixxx-beta --uninstall"
+}
+
+uninstall_mixxx() {
+    local answer=""
+    log "This removes:"
+    log "  ${LAUNCHER}"
+    log "  ${DESKTOP_FILE}"
+    log "  ${INSTALL_PREFIX}"
+    log "  the '${TOOLBOX_NAME}' toolbox"
+    log "  (other Mixxx 2.6 builds that use this toolbox, e.g. a VimMixxxStems checkout, stop working too)"
+    log "Your ~/.mixxx (Mixxx 2.5) and ${SETTINGS_DIR} are kept."
+    if [[ -t 0 ]]; then
+        read -r -p "Continue? [y/N] " answer || true
+    fi
+    if [[ "${answer}" != [yY] ]]; then
+        log "Nothing removed."
+        return 0
+    fi
+
+    rm -f "${LAUNCHER}" "${DESKTOP_FILE}"
+    rm -rf "${INSTALL_PREFIX}"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$(dirname "${DESKTOP_FILE}")" 2>/dev/null || true
+    fi
+    if toolbox_exists; then
+        toolbox rm -f "${TOOLBOX_NAME}"
+    fi
+    log "Mixxx 2.6 (beta) is removed. Source in ${SRC_DIR} was left in place; delete it manually if you no longer need it."
+}
+
+case "${1:-install}" in
+    install) install_mixxx ;;
+    --uninstall|uninstall) uninstall_mixxx ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac

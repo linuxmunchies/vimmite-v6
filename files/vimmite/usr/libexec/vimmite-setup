@@ -143,6 +143,28 @@ ai_menu() {
     /usr/libexec/vimmite-ai
 }
 
+mixxx_menu() {
+    local choice
+    echo "Mixxx 2.5 (image package): $(rpm -q mixxx >/dev/null 2>&1 && enabled || disabled)"
+    echo "Mixxx 2.6 beta (stems, built in toolbox 'mixxx26'): $(command -v mixxx26 >/dev/null 2>&1 && enabled || disabled)"
+    echo "Mixxx 2.5 keeps its profile in ~/.mixxx; 2.6 uses ~/.mixxx-stems and does not touch it."
+    echo "Undo: select 'Uninstall Mixxx 2.6 beta' below. It keeps ~/.mixxx and ~/.mixxx-stems."
+    choice="$(choose "Mixxx 2.6 (beta)" \
+        "Install Mixxx 2.6 beta (builds from source, about 10-20 minutes)" \
+        "Uninstall Mixxx 2.6 beta" \
+        "Back")" || return 0
+    case "${choice}" in
+        "Install Mixxx 2.6 beta"*)
+            run_ujust install-mixxx-beta
+            echo "Mixxx 2.6 beta is $(enabled). Launch: mixxx26"
+            ;;
+        "Uninstall Mixxx 2.6 beta")
+            run_ujust install-mixxx-beta --uninstall
+            ;;
+    esac
+    pause
+}
+
 virtualization_menu() {
     local state choice
     systemctl is-enabled --quiet virtqemud.socket 2>/dev/null && state="$(enabled)" || state="$(disabled)"
@@ -207,6 +229,7 @@ while true; do
         "Development container" \
         "Gaming and streaming" \
         "AI backend and model storage" \
+        "Mixxx 2.6 (beta)" \
         "Virtualization" \
         "SSH and Wake-on-LAN" \
         "Automount and HyperX" \
@@ -218,6 +241,7 @@ while true; do
         "Development container") development_menu ;;
         "Gaming and streaming") gaming_menu ;;
         "AI backend and model storage") ai_menu ;;
+        "Mixxx 2.6 (beta)") mixxx_menu ;;
         "Virtualization") virtualization_menu ;;
         "SSH and Wake-on-LAN") network_menu ;;
         "Automount and HyperX") optional_menu ;;
